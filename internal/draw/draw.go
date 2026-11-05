@@ -21,6 +21,17 @@ import (
 	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
 )
 
+// Look is how tickets are drawn: as cards (a box with the title) or compact
+// (a circle with the number). Only cards are drawn so far.
+type Look int
+
+const (
+	Cards Look = iota
+	Compact
+)
+
+func (l Look) String() string { return [...]string{"cards", "compact"}[l] }
+
 // Card size in layout units; one unit is one pixel at 18px-high cells.
 const cardW, cardH = 230, 66
 

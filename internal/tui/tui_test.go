@@ -227,17 +227,132 @@ func TestShowsTheMapAsAKittyImage(t *testing.T) {
 	}
 }
 
-func TestNoMapNumberOpensTheNewestOpenMap(t *testing.T) {
-	src := &fakeSource{
-		maps: map[int][]byte{175: fixture(t, "map-175.json")},
-		list: []byte(`{"data":{"repository":{"issues":{"nodes":[{"number":175,"title":"x"},{"number":214,"title":"y"}]}}}}`),
-	}
+func TestNoMapNumberOpensThePicker(t *testing.T) {
+	src := &fakeSource{list: fixture(t, "list-ask-barry.json")}
 	a := start(t, src, 0)
-	if !reflect.DeepEqual(src.loaded, []int{175}) {
-		t.Errorf("loaded maps %v, want [175]", src.loaded)
+	a.send(tea.WindowSizeMsg{Width: 120, Height: 30})
+	if raw := a.wait(time.Second); len(raw) != 0 || len(src.loaded) != 0 {
+		t.Errorf("the picker loaded maps %v or placed an image: %q", src.loaded, raw)
 	}
-	if !strings.Contains(a.view(), "#175") {
-		t.Errorf("view doesn't show #175: %q", a.view())
+	for _, want := range []string{
+		"banked/ask-barry",
+		"#232 · 0/3 done · 2 ready · 0 claimed · 1 blocked · Wayfinder: define Sandcastle's sandbox",
+		"#214 · 4/8 done · 1 ready · 0 claimed · 3 blocked · Wayfinder: run Sandcastle standalone",
+		"#175 · 2/14 done · 9 ready · 0 claimed · 3 blocked · Bring ask-barry pipelines",
+		"#152 · 4/8 done · 4 ready · 0 claimed · 0 blocked · Wayfinder: isolated Stacks",
+	} {
+		if !strings.Contains(a.view(), want) {
+			t.Errorf("picker lacks %q:\n%s", want, a.view())
+		}
+	}
+	if strings.Contains(a.view(), "more maps exist") {
+		t.Errorf("hinted at more maps when all are listed:\n%s", a.view())
+	}
+}
+
+func TestEnterOpensTheMapUnderTheCursor(t *testing.T) {
+	src := &fakeSource{list: fixture(t, "list-ask-barry.json"), maps: map[int][]byte{214: fixture(t, "map-214.json")}}
+	a := start(t, src, 0).sized()
+	if !strings.Contains(a.view(), "› #232 · ") {
+		t.Fatalf("the cursor doesn't start on the first map:\n%s", a.view())
+	}
+	a.key("down")
+	a.key("down")
+	a.key("up")
+	if !strings.Contains(a.view(), "› #214 · ") {
+		t.Fatalf("down, down, up didn't reach #214:\n%s", a.view())
+	}
+	a.key("enter")
+	if raw := a.wait(time.Second); !slices.Equal(src.loaded, []int{214}) || placements(raw) != 1 {
+		t.Errorf("enter loaded %v and placed %d images, want #214 once", src.loaded, placements(raw))
+	}
+	if !strings.Contains(a.view(), "#214 · 2 frontier") {
+		t.Errorf("view doesn't show map #214:\n%s", a.view())
+	}
+}
+
+func TestBackReturnsToThePicker(t *testing.T) {
+	for _, k := range []string{"b", "esc"} {
+		t.Run(k, func(t *testing.T) {
+			src := &fakeSource{list: fixture(t, "list-ask-barry.json"), maps: map[int][]byte{175: fixture(t, "map-175.json")}}
+			a := start(t, src, 175).sized()
+			var raw []string
+			if k == "esc" {
+				raw = a.send(tea.KeyPressMsg{Code: tea.KeyEscape})
+			} else {
+				raw = a.key(k)
+			}
+			if len(raw) != 1 || raw[0] != "\x1b_Ga=d,d=A,q=2\x1b\\" {
+				t.Errorf("%s didn't clear the image: %q", k, raw)
+			}
+			// The cursor is on the map just left.
+			if src.lists != 1 || !strings.Contains(a.view(), "› #175 · ") {
+				t.Errorf("%s listed %d times; view:\n%s", k, src.lists, a.view())
+			}
+			if raw := a.wait(time.Second); len(raw) != 0 {
+				t.Errorf("the picker placed an image: %q", raw)
+			}
+		})
+	}
+}
+
+func TestALateMapIsDroppedAfterGoingBack(t *testing.T) {
+	src := &fakeSource{list: fixture(t, "list-ask-barry.json"), maps: map[int][]byte{232: fixture(t, "map-214.json")}}
+	a := start(t, src, 0).sized()
+	// Pick a map, then go back before it loads.
+	var load tea.Cmd
+	a.m, load = a.m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	a.key("b")
+	for _, msg := range run(load) {
+		a.send(msg)
+	}
+	if raw := a.wait(time.Second); len(raw) != 0 || !strings.Contains(a.view(), "› #232 · ") {
+		t.Errorf("a map that loaded after going back was shown: %q\n%s", raw, a.view())
+	}
+}
+
+func TestHintsAtMoreMaps(t *testing.T) {
+	src := &fakeSource{list: []byte(`{"data":{"repository":{"nameWithOwner":"a/b","issues":{"totalCount":51,"nodes":[
+		{"number":7,"title":"One of 51","subIssuesSummary":{"total":0,"completed":0},"subIssues":{"nodes":[]}}]}}}}`)}
+	a := start(t, src, 0).sized()
+	if !strings.Contains(a.view(), "more maps exist; open one directly with `wayfinder-map <number>`") {
+		t.Errorf("no hint at more maps:\n%s", a.view())
+	}
+}
+
+func TestThePickerScrollsToTheCursor(t *testing.T) {
+	var nodes []string
+	for n := 1; n <= 10; n++ {
+		nodes = append(nodes, fmt.Sprintf(`{"number":%d,"title":"Map %d","subIssuesSummary":{"total":0,"completed":0},"subIssues":{"nodes":[]}}`, n, n))
+	}
+	src := &fakeSource{list: fmt.Appendf(nil, `{"data":{"repository":{"nameWithOwner":"a/b","issues":{"totalCount":10,"nodes":[%s]}}}}`, strings.Join(nodes, ","))}
+	a := start(t, src, 0)
+	// A header, four rows and the status line.
+	a.send(tea.WindowSizeMsg{Width: 80, Height: 6})
+	for range 6 {
+		a.key("down")
+	}
+	v := a.view()
+	if !strings.Contains(v, "› #7 · ") || strings.Contains(v, "#3 · ") || !strings.Contains(v, "#4 · ") {
+		t.Errorf("want rows #4 to #7 with the cursor on #7:\n%s", v)
+	}
+	if lines := strings.Count(v, "\n") + 1; lines != 6 {
+		t.Errorf("the picker is %d lines high, want 6", lines)
+	}
+}
+
+func TestThePickerRefreshesUntilAMapIsOpened(t *testing.T) {
+	src := &fakeSource{list: fixture(t, "list-ask-barry.json"), maps: map[int][]byte{232: fixture(t, "map-214.json")}}
+	a := start(t, src, 0).sized()
+	a.wait(30 * time.Second)
+	a.key("r")
+	if src.lists != 3 {
+		t.Errorf("listed %d times after 30s and r, want 3", src.lists)
+	}
+	a.key("enter")
+	a.wait(60 * time.Second)
+	if src.lists != 3 || len(src.loaded) != 3 {
+		t.Errorf("after a minute on a map: %d listings, %d loads; want 3 and 3", src.lists, len(src.loaded))
 	}
 }
 
@@ -451,12 +566,12 @@ func TestShowsWarnings(t *testing.T) {
 }
 
 func TestAFailedListingIsRetried(t *testing.T) {
-	src := &fakeSource{err: errors.New("gh: network down"), maps: map[int][]byte{175: fixture(t, "map-175.json")}}
-	a := start(t, src, 0)
+	src := &fakeSource{err: errors.New("gh: network down")}
+	a := start(t, src, 0).sized()
 	src.err = nil
 	src.list = []byte(`{"data":{"repository":{"issues":{"nodes":[{"number":175,"title":"x"}]}}}}`)
 	a.wait(30 * time.Second)
-	if src.lists != 2 || !strings.Contains(a.view(), "#175") {
+	if src.lists != 2 || !strings.Contains(a.view(), "› #175 · ") || strings.Contains(a.view(), "network down") {
 		t.Errorf("listed %d times; view:\n%s", src.lists, a.view())
 	}
 }

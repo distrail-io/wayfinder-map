@@ -1,10 +1,10 @@
 // Command wayfinder-map draws a Wayfinder map from GitHub Issues as a graph
 // in the terminal. It reads through the user's gh login and never writes.
 //
-//	wayfinder-map [MAP] [-R owner/repo] [--interval 30s]
+//	wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list]
 //
-// MAP is 123, #123 or owner/repo#123. Without it, the repo's most recently
-// updated open map opens.
+// MAP is 123, #123, owner/repo#123 or an issue URL. Without it, a picker
+// lists the repo's open maps.
 package main
 
 import (
@@ -13,11 +13,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/github"
+	"github.com/distrail-io/wayfinder-map/internal/layout"
 	"github.com/distrail-io/wayfinder-map/internal/tui"
 )
 
@@ -38,44 +41,165 @@ func main() {
 }
 
 func run(args []string, getenv func(string) string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("wayfinder-map", flag.ContinueOnError)
-	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: wayfinder-map [MAP] [-R owner/repo] [--interval 30s]\n\nMAP is 123, #123 or owner/repo#123; without it, the newest open map opens.")
-		fs.PrintDefaults()
-	}
-	var repo string
-	fs.StringVar(&repo, "R", "", "the repo to read, as owner/repo")
-	fs.StringVar(&repo, "repo", "", "the same as -R")
-	interval := fs.Duration("interval", tui.DefaultInterval, "how often to reload the map, at least "+minInterval.String())
-	showVersion := fs.Bool("version", false, "print the version and exit")
-	pos, err := parseInterleaved(fs, args)
+	o, err := parseOptions(args, getenv)
 	if err != nil {
 		return err
 	}
-	if *showVersion {
+	if o.version {
 		fmt.Fprintln(stdout, "wayfinder-map", version)
 		return nil
 	}
-	if *interval < minInterval {
-		return fmt.Errorf("bad --interval %v: want at least %v", *interval, minInterval)
+	src := github.GH{Target: github.Resolve(o.ref, o.repo, getenv)}
+	_, err = tea.NewProgram(tui.New(tui.Config{
+		Source:   src,
+		Number:   o.ref.Number,
+		Interval: o.interval,
+		Look:     o.look,
+		Dir:      o.dir,
+		AutoDir:  o.autoDir,
+		List:     o.list,
+	})).Run()
+	return err
+}
+
+type options struct {
+	ref      github.Ref
+	repo     string
+	look     draw.Look
+	dir      layout.Dir
+	autoDir  bool // pick the direction that fits the pane
+	interval time.Duration
+	list     bool
+	version  bool
+}
+
+// envVars set the flags they name. A flag beats its variable, which beats
+// the default.
+var envVars = []struct{ name, flag string }{
+	{"WAYFINDER_MAP_LOOK", "look"},
+	{"WAYFINDER_MAP_DIR", "dir"},
+	{"WAYFINDER_MAP_INTERVAL", "interval"},
+	{"WAYFINDER_MAP_LIST", "list"},
+}
+
+func parseOptions(args []string, getenv func(string) string) (options, error) {
+	o := options{look: draw.Cards, autoDir: true, interval: tui.DefaultInterval}
+	fs := flag.NewFlagSet("wayfinder-map", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), usage)
+		fs.PrintDefaults()
 	}
-	if repo != "" && !github.ValidRepo(repo) {
-		return fmt.Errorf("bad -R %q: want owner/repo", repo)
+	fs.StringVar(&o.repo, "R", "", "the repo to read, as owner/repo")
+	fs.StringVar(&o.repo, "repo", "", "the same as -R")
+	fs.Var((*lookValue)(&o.look), "look", "how tickets are drawn: cards or compact (default cards)")
+	fs.Var(dirValue{&o.dir, &o.autoDir}, "dir", "the graph's direction: auto, lr or tb (default auto)")
+	fs.Var((*intervalValue)(&o.interval), "interval", "how often to reload the map, at least "+minInterval.String())
+	fs.Var((*boolValue)(&o.list), "list", "list the tickets as text instead of drawing the graph")
+	fs.BoolVar(&o.version, "version", false, "print the version and exit")
+	for _, e := range envVars {
+		if v := getenv(e.name); v != "" {
+			if err := fs.Lookup(e.flag).Value.Set(v); err != nil {
+				return options{}, fmt.Errorf("bad %s=%q: %v", e.name, v, err)
+			}
+		}
 	}
-	var ref github.Ref
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return options{}, err
+	}
+	if o.repo != "" && !github.ValidRepo(o.repo) {
+		return options{}, fmt.Errorf("bad -R %q: want owner/repo", o.repo)
+	}
 	switch len(pos) {
 	case 0:
 	case 1:
-		if ref, err = github.ParseRef(pos[0]); err != nil {
-			return err
+		if o.ref, err = github.ParseRef(pos[0]); err != nil {
+			return options{}, err
 		}
 	default:
-		return fmt.Errorf("one MAP at most, got %q", pos)
+		return options{}, fmt.Errorf("one MAP at most, got %q", pos)
 	}
+	return o, nil
+}
 
-	src := github.GH{Target: github.Resolve(ref, repo, getenv)}
-	_, err = tea.NewProgram(tui.New(tui.Config{Source: src, Number: ref.Number, Interval: *interval})).Run()
-	return err
+const usage = `usage: wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list]
+
+MAP is 123, #123, owner/repo#123 or an issue URL; without it, a picker lists
+the repo's open maps. WAYFINDER_MAP_LOOK, WAYFINDER_MAP_DIR,
+WAYFINDER_MAP_INTERVAL and WAYFINDER_MAP_LIST=1 set the flags of those names;
+a flag beats its variable.
+`
+
+type lookValue draw.Look
+
+func (v *lookValue) String() string { return draw.Look(*v).String() }
+
+func (v *lookValue) Set(s string) error {
+	switch s {
+	case "cards":
+		*v = lookValue(draw.Cards)
+	case "compact":
+		*v = lookValue(draw.Compact)
+	default:
+		return errors.New("want cards or compact")
+	}
+	return nil
+}
+
+type dirValue struct {
+	dir  *layout.Dir
+	auto *bool
+}
+
+func (v dirValue) String() string {
+	switch {
+	case v.auto == nil || *v.auto:
+		return "auto"
+	case *v.dir == layout.TB:
+		return "tb"
+	}
+	return "lr"
+}
+
+func (v dirValue) Set(s string) error {
+	switch s {
+	case "auto":
+		*v.dir, *v.auto = layout.LR, true
+	case "lr":
+		*v.dir, *v.auto = layout.LR, false
+	case "tb":
+		*v.dir, *v.auto = layout.TB, false
+	default:
+		return errors.New("want auto, lr or tb")
+	}
+	return nil
+}
+
+type intervalValue time.Duration
+
+func (v *intervalValue) String() string { return time.Duration(*v).String() }
+
+func (v *intervalValue) Set(s string) error {
+	d, err := time.ParseDuration(s)
+	if err != nil || d < minInterval {
+		return fmt.Errorf("want a duration of at least %v", minInterval)
+	}
+	*v = intervalValue(d)
+	return nil
+}
+
+type boolValue bool
+
+func (v *boolValue) String() string   { return strconv.FormatBool(bool(*v)) }
+func (v *boolValue) IsBoolFlag() bool { return true }
+
+func (v *boolValue) Set(s string) error {
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return errors.New("want 1 or 0, or true or false")
+	}
+	*v = boolValue(b)
+	return nil
 }
 
 // parseInterleaved lets flags follow positional arguments, as in

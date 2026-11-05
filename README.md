@@ -3,10 +3,10 @@
 A read-only terminal viewer that draws a Wayfinder map from GitHub Issues as a graph of its tickets and their blockers. It runs in Ghostty, or in a Herdr pane, and draws with Kitty graphics.
 
 ```sh
-wayfinder-map [MAP] [-R owner/repo] [--interval 30s]
+wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list]
 ```
 
-MAP is `123`, `#123` or `owner/repo#123`. Without a MAP, the repo's most recently updated open map opens.
+MAP is `123`, `#123`, `owner/repo#123` or an issue URL. Without a MAP, a picker lists the repo's open maps, most recently updated first. Each row shows how many of the map's tickets are done, and how many are ready, claimed and blocked. `enter` opens the map under the cursor. The picker lists 50 maps; if there are more, open one directly with `wayfinder-map <number>`.
 
 Each ticket is a card: its fill is its state (grey done, blue claimed, green frontier, red blocked) and its icon is its type. Edges run from a blocker to what it blocks, and fade to dashes once the blocker is closed. Below the graph are the selected ticket's details and the map's warnings: a closed map, more tickets or blockers than one query fetches, blockers in another repo (shown as `owner/repo#N`), tickets without a `wayfinder:*` type (shown as `?`) and cycles.
 
@@ -15,10 +15,15 @@ Each ticket is a card: its fill is its state (grey done, blue claimed, green fro
 | `←↑↓→` | select the nearest ticket that way |
 | `tab` / `shift+tab` | select the next or previous ticket |
 | `o` / `enter` | open the selected ticket in the browser |
+| `b` / `esc` | go back to the picker |
 | `r` | refresh now |
 | `q` | quit |
 
-The map reloads every `--interval` (30s by default, 10s at least) and is redrawn only when it changes.
+The map, or the picker, reloads every `--interval` (30s by default, 10s at least). The map is redrawn only when it changes.
+
+`--dir` sets the graph's direction: left to right, top to bottom, or `auto`, which is left to right for now. `--look compact` and `--list` are accepted but not drawn yet ([#10](https://github.com/distrail-io/wayfinder-map/issues/10)).
+
+Each flag has an environment variable: `WAYFINDER_MAP_LOOK`, `WAYFINDER_MAP_DIR`, `WAYFINDER_MAP_INTERVAL` and `WAYFINDER_MAP_LIST=1`. A flag beats its variable, which beats the default. An invalid value stops it at startup with an error that names the variable.
 
 The repo comes from the first of these that is set: the `owner/repo` in MAP, `-R`, `GH_REPO`, the Herdr pane's checkout, then the current directory.
 
@@ -39,7 +44,7 @@ To build from source instead: `go build -o bin/wayfinder-map ./cmd/wayfinder-map
 herdr plugin link /path/to/this/checkout
 ```
 
-The "Open Wayfinder map" action opens a right split showing the newest open map of the focused pane's repo. To bind it to a key, add this to your Herdr config:
+The "Open Wayfinder map" action opens a right split with the picker for the focused pane's repo. To bind it to a key, add this to your Herdr config:
 
 ```toml
 [[keys.command]]
@@ -63,7 +68,10 @@ command = "distrail-io.wayfinder-map.open"
 ```sh
 go test -race ./...    # no test calls gh or the network
 go test ./internal/draw -update    # rewrite the golden images after a deliberate change
+go test -tags contract -run TestContract -count=1 ./internal/github    # the live API check
 ```
+
+The contract check (`contract.yml`, weekly and on dispatch) runs the two queries against this repo's own map with `GITHUB_TOKEN`. It fails on GraphQL errors, on a result that doesn't parse, and on any field the queries use that GitHub has deprecated.
 
 `fixtures/map-edge-cases.json` is `map-214.json` edited to hold every edge case the viewer flags; `go run ./fixtures/edgecases` regenerates it.
 

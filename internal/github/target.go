@@ -3,6 +3,7 @@ package github
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -13,17 +14,39 @@ type Ref struct {
 	Number int
 }
 
-// ParseRef reads 123, #123 or owner/repo#123.
+// ParseRef reads 123, #123, owner/repo#123 or an issue URL,
+// https://github.com/owner/repo/issues/123.
 func ParseRef(s string) (Ref, error) {
-	repo, num, hasRepo := strings.Cut(s, "#")
-	if !hasRepo {
-		repo, num = "", s
+	var repo, num string
+	if strings.Contains(s, "://") || strings.HasPrefix(s, "github.com/") {
+		repo, num = issueURL(s)
+	} else if r, n, hasRepo := strings.Cut(s, "#"); hasRepo {
+		repo, num = r, n
+	} else {
+		num = s
 	}
 	n, err := strconv.Atoi(num)
-	if err != nil || n <= 0 || hasRepo && repo != "" && !ValidRepo(repo) {
-		return Ref{}, fmt.Errorf("bad map reference %q: want 123, #123 or owner/repo#123", s)
+	if err != nil || n <= 0 || repo != "" && !ValidRepo(repo) {
+		return Ref{}, fmt.Errorf("bad map reference %q: want 123, #123, owner/repo#123 or an issue URL", s)
 	}
 	return Ref{Repo: repo, Number: n}, nil
+}
+
+// issueURL splits a github.com issue URL into owner/repo and the number,
+// ignoring any query or fragment. Anything else gives "", "".
+func issueURL(s string) (repo, num string) {
+	if !strings.Contains(s, "://") {
+		s = "https://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
+		return "", ""
+	}
+	parts := strings.Split(strings.TrimSuffix(u.Path, "/"), "/")
+	if len(parts) != 5 || parts[0] != "" || parts[3] != "issues" {
+		return "", ""
+	}
+	return parts[1] + "/" + parts[2], parts[4]
 }
 
 // ValidRepo reports whether s looks like owner/repo.

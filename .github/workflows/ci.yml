@@ -20,7 +20,9 @@ jobs:
           go-version: "1.27.x"
           cache: false
       - name: vet
-        run: go vet -mod=vendor ./...
+        run: |
+          go vet -mod=vendor ./...
+          go vet -mod=vendor -tags contract ./internal/github
       - name: test
         run: go test -mod=vendor -race ./...
       - name: govulncheck
