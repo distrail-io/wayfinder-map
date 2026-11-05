@@ -7,9 +7,12 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
+	"sync"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
+	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/image/vector"
@@ -18,8 +21,8 @@ import (
 	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
 )
 
-// Box size in layout units; one unit is one pixel at 18px-high cells.
-const boxW, boxH = 96, 40
+// Card size in layout units; one unit is one pixel at 18px-high cells.
+const cardW, cardH = 230, 66
 
 var (
 	fillOf = map[wayfinder.State]color.RGBA{
@@ -32,14 +35,18 @@ var (
 	textDone = color.RGBA{0xc4, 0xcb, 0xd2, 0xff}
 	edgeCol  = color.NRGBA{0xa8, 0xb1, 0xbb, 0xe6}
 	fadedCol = color.NRGBA{0xa8, 0xb1, 0xbb, 0x50}
+	ringCol  = color.RGBA{0xff, 0xd3, 0x3d, 0xff}
 )
 
-// Graph is the map as a layout graph: one box per ticket, one edge per
+// FillOf is the card colour of each state, for a legend.
+func FillOf(s wayfinder.State) color.RGBA { return fillOf[s] }
+
+// Graph is the map as a layout graph: one card per ticket, one edge per
 // in-map blocker.
 func Graph(m *wayfinder.Map) layout.Graph {
 	var g layout.Graph
 	for _, t := range m.Tickets {
-		g.Nodes = append(g.Nodes, layout.Node{ID: t.Number, W: boxW, H: boxH})
+		g.Nodes = append(g.Nodes, layout.Node{ID: t.Number, W: cardW, H: cardH})
 	}
 	for _, e := range m.Edges {
 		g.Edges = append(g.Edges, layout.Edge{From: e.From, To: e.To})
@@ -48,14 +55,17 @@ func Graph(m *wayfinder.Map) layout.Graph {
 }
 
 // Render draws the layout of Graph(m) centred in a W×H image, scaled to fit
-// but never above maxScale.
-func Render(m *wayfinder.Map, res layout.Result, W, H int, maxScale float64) *image.RGBA {
+// but never above maxScale. Ticket sel, if any, gets a ring.
+func Render(m *wayfinder.Map, res layout.Result, sel int, W, H int, maxScale float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
 	s := math.Min(math.Min(float64(W)/res.W, float64(H)/res.H), maxScale)
 	ox, oy := (float64(W)-res.W*s)/2, (float64(H)-res.H*s)/2
 	pt := func(p layout.Point) layout.Point { return layout.Point{X: ox + p.X*s, Y: oy + p.Y*s} }
 
 	for i, c := range res.Curves {
+		if len(c.Pts) == 0 {
+			continue
+		}
 		col, dash := edgeCol, 0.0
 		if m.Edges[i].Faded {
 			col, dash = fadedCol, 6*s
@@ -68,23 +78,55 @@ func Render(m *wayfinder.Map, res layout.Result, W, H int, maxScale float64) *im
 		stroke(img, line, math.Max(1, 1.8*s), col, dash)
 		arrowhead(img, line[len(line)-1], line[max(0, len(line)-3)], 9*s, col)
 	}
-	fs := 13 * s
 	for _, t := range m.Tickets {
 		b := res.Boxes[t.Number]
 		p := pt(layout.Point{X: b.X, Y: b.Y})
-		w, h := b.W*s, b.H*s
-		fill(img, roundRect(p.X, p.Y, w, h, 6*s), fillOf[t.State])
-		tc := textOn
-		if t.State == wayfinder.Done {
-			tc = textDone
-		}
-		label := fmt.Sprintf("#%d", t.Number)
-		text(img, p.X+(w-measure(label, fs))/2, p.Y+h/2+fs*0.35, label, fs, tc)
+		card(img, t, p.X, p.Y, b.W*s, b.H*s, s, t.Number == sel)
 	}
 	return img
 }
 
+// card draws a ticket as a rounded box filled by state, with its type icon,
+// number and title wrapped to two lines.
+func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected bool) {
+	r := 8 * s
+	if selected {
+		ring(img, x, y, w, h, r, s)
+	}
+	fill(img, roundRect(x, y, w, h, r), fillOf[t.State])
+	tc := textOn
+	if t.State == wayfinder.Done {
+		tc = textDone
+	}
+	is := 22 * s
+	icon(img, t.Type, x+9*s, y+(h-is)/2, is, tc)
+	tx := x + 9*s + is + 9*s
+	tw := x + w - tx - 8*s
+	fs := 12.5 * s
+	text(img, tx, y+fs+7*s, fmt.Sprintf("#%d", t.Number), fs*0.9, true, tc)
+	for i, l := range wrap(t.Title, fs, tw, 2) {
+		text(img, tx, y+fs*2+12*s+float64(i)*fs*1.25, l, fs, false, tc)
+	}
+}
+
+// ring draws a band around a card, punching out its middle by winding the
+// inner path the other way.
+func ring(img *image.RGBA, x, y, w, h, r, s float64) {
+	o, band := 4*s, 3*s
+	p := roundRect(x-o, y-o, w+2*o, h+2*o, r+o)
+	in := o - band
+	p.moveTo(x-in, y-in)
+	p.lineTo(x-in, y+h+in)
+	p.lineTo(x+w+in, y+h+in)
+	p.lineTo(x+w+in, y-in)
+	p.close()
+	fill(img, p, ringCol)
+}
+
 // ---- paths, filled with the vector rasteriser over their bounding box ----
+//
+// The rasteriser takes the absolute winding, so overlapping shapes must wind
+// the same way to add up, and opposite windings cancel out.
 
 type path struct {
 	ops []op
@@ -113,6 +155,9 @@ func (p *path) lineTo(x, y float64) { p.add('L', float32(x), float32(y)) }
 func (p *path) quadTo(a, b, x, y float64) {
 	p.add('Q', float32(a), float32(b), float32(x), float32(y))
 }
+func (p *path) cubeTo(a, b, c, d, x, y float64) {
+	p.add('C', float32(a), float32(b), float32(c), float32(d), float32(x), float32(y))
+}
 func (p *path) close() { p.ops = append(p.ops, op{k: 'Z'}) }
 
 func fill(img *image.RGBA, p *path, col color.Color) {
@@ -135,6 +180,8 @@ func fill(img *image.RGBA, p *path, col color.Color) {
 			z.LineTo(q[0]-ox, q[1]-oy)
 		case 'Q':
 			z.QuadTo(q[0]-ox, q[1]-oy, q[2]-ox, q[3]-oy)
+		case 'C':
+			z.CubeTo(q[0]-ox, q[1]-oy, q[2]-ox, q[3]-oy, q[4]-ox, q[5]-oy)
 		case 'Z':
 			z.ClosePath()
 		}
@@ -157,32 +204,69 @@ func roundRect(x, y, w, h, r float64) *path {
 	return p
 }
 
-// stroke draws a polyline as one quad per segment; dash > 0 alternates
-// on and off every dash pixels.
-func stroke(img *image.RGBA, pts []layout.Point, w float64, col color.Color, dash float64) {
-	p := &path{}
-	dist := 0.0
+// strokeTo adds a polyline to p as one quad per segment, all wound the same
+// way; dash > 0 alternates on and off every dash pixels.
+func strokeTo(p *path, pts []layout.Point, w, dash float64) {
+	on, left := true, dash // whether the current dash is drawn, and how much of it is left
 	for i := 1; i < len(pts); i++ {
 		a, b := pts[i-1], pts[i]
-		dx, dy := b.X-a.X, b.Y-a.Y
-		l := math.Hypot(dx, dy)
+		l := math.Hypot(b.X-a.X, b.Y-a.Y)
 		if l == 0 {
 			continue
 		}
-		on := dash == 0 || int(dist/dash)%2 == 0
-		dist += l
-		if !on {
+		if dash == 0 {
+			quad(p, a, b, l, w)
 			continue
 		}
-		nx, ny := -dy/l*w/2, dx/l*w/2
-		ex, ey := dx/l*w/4, dy/l*w/4 // overlap neighbours slightly to hide joins
-		p.moveTo(a.X+nx-ex, a.Y+ny-ey)
-		p.lineTo(b.X+nx+ex, b.Y+ny+ey)
-		p.lineTo(b.X-nx+ex, b.Y-ny+ey)
-		p.lineTo(a.X-nx-ex, a.Y-ny-ey)
-		p.close()
+		lerp := func(u float64) layout.Point {
+			return layout.Point{X: a.X + (b.X-a.X)*u/l, Y: a.Y + (b.Y-a.Y)*u/l}
+		}
+		// Cut the segment where dashes start and end.
+		for t := 0.0; t < l; {
+			step := math.Min(left, l-t)
+			if on {
+				quad(p, lerp(t), lerp(t+step), step, w)
+			}
+			t += step
+			if left -= step; left <= 0 {
+				on, left = !on, dash
+			}
+		}
 	}
+}
+
+// quad adds the segment a–b, of length l, as a quad w wide.
+func quad(p *path, a, b layout.Point, l, w float64) {
+	if l <= 0 {
+		return
+	}
+	dx, dy := b.X-a.X, b.Y-a.Y
+	nx, ny := -dy/l*w/2, dx/l*w/2
+	ex, ey := dx/l*w/4, dy/l*w/4 // overlap neighbours slightly to hide joins
+	p.moveTo(a.X+nx-ex, a.Y+ny-ey)
+	p.lineTo(b.X+nx+ex, b.Y+ny+ey)
+	p.lineTo(b.X-nx+ex, b.Y-ny+ey)
+	p.lineTo(a.X-nx-ex, a.Y-ny-ey)
+	p.close()
+}
+
+// stroke draws a polyline w wide, dashed if dash > 0.
+func stroke(img *image.RGBA, pts []layout.Point, w float64, col color.Color, dash float64) {
+	p := &path{}
+	strokeTo(p, pts, w, dash)
 	fill(img, p, col)
+}
+
+// discTo adds a circle to p, wound the same way as strokeTo's quads, so it
+// rounds their joins and caps.
+func discTo(p *path, cx, cy, r float64) {
+	k := 0.5523 * r
+	p.moveTo(cx+r, cy)
+	p.cubeTo(cx+r, cy-k, cx+k, cy-r, cx, cy-r)
+	p.cubeTo(cx-k, cy-r, cx-r, cy-k, cx-r, cy)
+	p.cubeTo(cx-r, cy+k, cx-k, cy+r, cx, cy+r)
+	p.cubeTo(cx+k, cy+r, cx+r, cy+k, cx+r, cy)
+	p.close()
 }
 
 // flatten turns cubic Bézier pieces into a polyline.
@@ -220,25 +304,78 @@ func arrowhead(img *image.RGBA, tip, from layout.Point, size float64, col color.
 // ---- text ----
 
 var (
-	bold, _ = opentype.Parse(gobold.TTF)
-	faces   = map[float64]font.Face{}
+	regular, _ = opentype.Parse(goregular.TTF)
+	bold, _    = opentype.Parse(gobold.TTF)
+	facesMu    sync.Mutex
+	faces      = map[faceKey]font.Face{}
 )
 
-func face(size float64) font.Face {
-	size = math.Round(size*2) / 2
-	if f, ok := faces[size]; ok {
+type faceKey struct {
+	size float64
+	bold bool
+}
+
+func face(size float64, isBold bool) font.Face {
+	key := faceKey{math.Round(size*2) / 2, isBold}
+	src := regular
+	if isBold {
+		src = bold
+	}
+	facesMu.Lock()
+	defer facesMu.Unlock()
+	if f, ok := faces[key]; ok {
 		return f
 	}
-	f, _ := opentype.NewFace(bold, &opentype.FaceOptions{Size: size, DPI: 72, Hinting: font.HintingFull})
-	faces[size] = f
+	f, _ := opentype.NewFace(src, &opentype.FaceOptions{Size: key.size, DPI: 72, Hinting: font.HintingFull})
+	faces[key] = f
 	return f
 }
 
-func text(img *image.RGBA, x, y float64, s string, size float64, col color.RGBA) {
-	d := font.Drawer{Dst: img, Src: image.NewUniform(col), Face: face(size), Dot: fixed.P(int(x), int(y))}
+func text(img *image.RGBA, x, y float64, s string, size float64, isBold bool, col color.RGBA) {
+	d := font.Drawer{Dst: img, Src: image.NewUniform(col), Face: face(size, isBold), Dot: fixed.P(int(x), int(y))}
 	d.DrawString(s)
 }
 
-func measure(s string, size float64) float64 {
-	return float64(font.MeasureString(face(size), s)) / 64
+func measure(s string, size float64, isBold bool) float64 {
+	return float64(font.MeasureString(face(size, isBold), s)) / 64
+}
+
+// wrap breaks s into at most n lines no wider than w, ending in an ellipsis
+// if anything is cut.
+func wrap(s string, size, w float64, n int) []string {
+	fits := func(l string) bool { return measure(l, size, false) <= w }
+	// shorten cuts runes off l until it fits with an ellipsis.
+	shorten := func(l string) string {
+		r := []rune(strings.TrimSuffix(l, "…"))
+		for len(r) > 0 && !fits(string(r)+"…") {
+			r = r[:len(r)-1]
+		}
+		return strings.TrimSpace(string(r)) + "…"
+	}
+	var lines []string
+	cur := ""
+	words := strings.Fields(s)
+	for i, wd := range words {
+		if try := strings.TrimSpace(cur + " " + wd); cur == "" || fits(try) {
+			cur = try
+			continue
+		}
+		lines = append(lines, cur)
+		if len(lines) == n {
+			cur = strings.Join(words[i:], " ")
+			break
+		}
+		cur = wd
+	}
+	if cur != "" || len(lines) == 0 {
+		lines = append(lines, cur)
+	}
+	cut := len(lines) > n
+	lines = lines[:min(n, len(lines))]
+	for i, l := range lines {
+		if !fits(l) || (cut && i == n-1) {
+			lines[i] = shorten(l)
+		}
+	}
+	return lines
 }

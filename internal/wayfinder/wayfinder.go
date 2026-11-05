@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -43,6 +44,15 @@ type Blocker struct {
 	Closed bool
 }
 
+// Ref names the blocker as seen from a map in mapRepo: #N, or owner/repo#N
+// when it lives in another repo.
+func (b Blocker) Ref(mapRepo string) string {
+	if b.Repo != mapRepo {
+		return fmt.Sprintf("%s#%d", b.Repo, b.Number)
+	}
+	return fmt.Sprintf("#%d", b.Number)
+}
+
 type Ticket struct {
 	Number    int
 	Title     string
@@ -66,6 +76,21 @@ type Map struct {
 	Closed  bool
 	Tickets []*Ticket // in number order
 	Edges   []Edge
+
+	// Warnings flag what the map can't show faithfully, such as truncation
+	// or a cycle, so it is never silently wrong.
+	Warnings []string
+}
+
+// Blocks returns the numbers of the tickets that ticket n blocks.
+func (m *Map) Blocks(n int) []int {
+	var out []int
+	for _, e := range m.Edges {
+		if e.From == n {
+			out = append(out, e.To)
+		}
+	}
+	return out
 }
 
 // Ticket returns the map's ticket with this number, or nil.
@@ -79,26 +104,51 @@ func (m *Map) Ticket(n int) *Ticket {
 
 type nodes[T any] struct{ Nodes []T }
 
+type pageInfo struct{ HasNextPage bool }
+
+// gqlErrors is the top-level errors array of a GraphQL response.
+type gqlErrors struct {
+	Errors []struct{ Message string }
+}
+
+// err joins the messages, sanitised, or is nil when there are none.
+func (g gqlErrors) err() error {
+	if len(g.Errors) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(g.Errors))
+	for i, e := range g.Errors {
+		msgs[i] = Sanitize(e.Message)
+	}
+	return errors.New("github: " + strings.Join(msgs, "; "))
+}
+
 type rawMap struct {
+	gqlErrors
 	Data struct {
 		Repository *struct {
 			NameWithOwner string
 			Issue         *struct {
-				Number    int
-				Title     string
-				State     string
-				SubIssues struct {
-					Nodes []struct {
+				Number           int
+				Title            string
+				State            string
+				SubIssuesSummary struct{ Total int }
+				SubIssues        struct {
+					PageInfo pageInfo
+					Nodes    []struct {
 						Number    int
 						Title     string
 						State     string
 						Labels    nodes[struct{ Name string }]
 						Assignees nodes[struct{ Login string }]
-						BlockedBy nodes[struct {
-							Number     int
-							State      string
-							Repository struct{ NameWithOwner string }
-						}]
+						BlockedBy struct {
+							PageInfo pageInfo
+							Nodes    []struct {
+								Number     int
+								State      string
+								Repository struct{ NameWithOwner string }
+							}
+						}
 					}
 				}
 			}
@@ -115,12 +165,16 @@ func Parse(raw []byte) (*Map, error) {
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, fmt.Errorf("parse map: %w", err)
 	}
+	if err := r.err(); err != nil {
+		return nil, err
+	}
 	repo := r.Data.Repository
 	if repo == nil || repo.Issue == nil {
 		return nil, ErrNotFound
 	}
 	is := repo.Issue
 	m := &Map{Repo: repo.NameWithOwner, Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED"}
+	var moreBlockers []int
 	for _, n := range is.SubIssues.Nodes {
 		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Type: NoType, Closed: n.State == "CLOSED"}
 		for _, l := range n.Labels.Nodes {
@@ -138,6 +192,9 @@ func Parse(raw []byte) (*Map, error) {
 		for _, b := range n.BlockedBy.Nodes {
 			t.Blockers = append(t.Blockers, Blocker{b.Repository.NameWithOwner, b.Number, b.State == "CLOSED"})
 		}
+		if n.BlockedBy.PageInfo.HasNextPage {
+			moreBlockers = append(moreBlockers, n.Number)
+		}
 		t.State = classify(t)
 		m.Tickets = append(m.Tickets, t)
 	}
@@ -149,7 +206,103 @@ func Parse(raw []byte) (*Map, error) {
 			}
 		}
 	}
+	slices.Sort(moreBlockers)
+	m.warn(max(is.SubIssuesSummary.Total, len(m.Tickets)), is.SubIssues.PageInfo.HasNextPage, moreBlockers)
 	return m, nil
+}
+
+func (m *Map) warn(total int, moreTickets bool, moreBlockers []int) {
+	if m.Closed {
+		m.Warnings = append(m.Warnings, "the map is closed")
+	}
+	if moreTickets || total > len(m.Tickets) {
+		m.Warnings = append(m.Warnings, fmt.Sprintf("truncated: showing %d of %d tickets", len(m.Tickets), total))
+	}
+	if len(moreBlockers) > 0 {
+		ns := make([]string, len(moreBlockers))
+		for i, n := range moreBlockers {
+			ns[i] = fmt.Sprintf("#%d", n)
+		}
+		m.Warnings = append(m.Warnings, "truncated: more blockers than shown on "+strings.Join(ns, ", "))
+	}
+	var crossRepo, untyped []string
+	for _, t := range m.Tickets {
+		for _, b := range t.Blockers {
+			if b.Repo != m.Repo {
+				crossRepo = append(crossRepo, fmt.Sprintf("#%d by %s", t.Number, b.Ref(m.Repo)))
+			}
+		}
+		if t.Type == NoType {
+			untyped = append(untyped, fmt.Sprintf("#%d", t.Number))
+		}
+	}
+	if len(crossRepo) > 0 {
+		m.Warnings = append(m.Warnings, "blocked from another repo: "+strings.Join(crossRepo, ", "))
+	}
+	if len(untyped) > 0 {
+		m.Warnings = append(m.Warnings, "no wayfinder:* type: "+strings.Join(untyped, ", "))
+	}
+	for _, c := range m.cycles() {
+		ns := make([]string, len(c))
+		for i, n := range c {
+			ns[i] = fmt.Sprintf("#%d", n)
+		}
+		m.Warnings = append(m.Warnings, "cycle: "+strings.Join(ns, ", "))
+	}
+}
+
+// cycles returns each group of tickets that block each other in a loop,
+// including a ticket that blocks itself, by Tarjan's algorithm. Each group is
+// in number order, and the groups are ordered by their first ticket.
+func (m *Map) cycles() [][]int {
+	succs := map[int][]int{}
+	self := map[int]bool{}
+	for _, e := range m.Edges {
+		succs[e.From] = append(succs[e.From], e.To)
+		self[e.From] = self[e.From] || e.From == e.To
+	}
+	index, low := map[int]int{}, map[int]int{}
+	onStack := map[int]bool{}
+	var stack []int
+	var out [][]int
+	var visit func(n int)
+	visit = func(n int) {
+		index[n], low[n] = len(index), len(index)
+		stack = append(stack, n)
+		onStack[n] = true
+		for _, s := range succs[n] {
+			if _, seen := index[s]; !seen {
+				visit(s)
+				low[n] = min(low[n], low[s])
+			} else if onStack[s] {
+				low[n] = min(low[n], index[s])
+			}
+		}
+		if low[n] != index[n] {
+			return
+		}
+		var group []int
+		for {
+			top := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[top] = false
+			group = append(group, top)
+			if top == n {
+				break
+			}
+		}
+		if len(group) > 1 || self[n] {
+			slices.Sort(group)
+			out = append(out, group)
+		}
+	}
+	for _, t := range m.Tickets {
+		if _, seen := index[t.Number]; !seen {
+			visit(t.Number)
+		}
+	}
+	slices.SortFunc(out, func(a, b []int) int { return a[0] - b[0] })
+	return out
 }
 
 // Summary is one open map in a repo.
@@ -162,6 +315,7 @@ type Summary struct {
 // most recently updated first.
 func ParseList(raw []byte) ([]Summary, error) {
 	var r struct {
+		gqlErrors
 		Data struct {
 			Repository *struct {
 				Issues nodes[Summary]
@@ -170,6 +324,9 @@ func ParseList(raw []byte) ([]Summary, error) {
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, fmt.Errorf("parse map list: %w", err)
+	}
+	if err := r.err(); err != nil {
+		return nil, err
 	}
 	if r.Data.Repository == nil {
 		return nil, ErrNotFound
@@ -196,17 +353,84 @@ func classify(t *Ticket) State {
 	return Frontier
 }
 
-// Sanitize makes an untrusted issue title safe to show: it drops C0 and C1
-// controls (so no escape sequences survive), bidi overrides, zero-width
-// characters and invalid UTF-8.
+// Sanitize makes an untrusted issue title safe to show: it removes escape
+// sequences whole, then drops controls, format characters (bidi overrides,
+// zero-width and invisible tag characters), line and paragraph separators,
+// and invalid UTF-8.
 func Sanitize(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r < 0x20, r >= 0x7f && r <= 0x9f,
-			r >= 0x200b && r <= 0x200f, r >= 0x202a && r <= 0x202e,
-			r >= 0x2066 && r <= 0x2069, r == 0xfeff, r == utf8.RuneError:
-			return -1
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if end := escapeEnd(s, i, r, size); end > i {
+			i = end
+			continue
 		}
-		return r
-	}, s)
+		if !unicode.IsControl(r) && !unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) && r != utf8.RuneError {
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// escapeEnd returns where the escape sequence that rune r starts at s[i]
+// ends, or i if r starts none. An unterminated sequence runs to the end.
+func escapeEnd(s string, i int, r rune, size int) int {
+	j := i + size
+	switch r {
+	case 0x1b: // ESC
+		if j == len(s) {
+			return j
+		}
+		switch c := s[j]; {
+		case c == '[':
+			return csiEnd(s, j+1)
+		case c == ']' || c == 'P' || c == 'X' || c == '^' || c == '_':
+			return stringEnd(s, j+1)
+		case c >= 0x20 && c <= 0x2f: // intermediates, then a final byte
+			for j < len(s) && s[j] >= 0x20 && s[j] <= 0x2f {
+				j++
+			}
+			if j < len(s) && s[j] >= 0x30 && s[j] <= 0x7e {
+				j++
+			}
+			return j
+		case c >= 0x30 && c <= 0x7e:
+			return j + 1
+		}
+		return j // a lone ESC
+	case 0x9b: // C1 CSI
+		return csiEnd(s, j)
+	case 0x90, 0x98, 0x9d, 0x9e, 0x9f: // C1 DCS, SOS, OSC, PM, APC
+		return stringEnd(s, j)
+	}
+	return i
+}
+
+// csiEnd skips a control sequence's parameter and intermediate bytes, and
+// its final byte if one follows.
+func csiEnd(s string, j int) int {
+	for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
+		j++
+	}
+	if j < len(s) && s[j] >= 0x40 && s[j] <= 0x7e {
+		j++
+	}
+	return j
+}
+
+// stringEnd skips a control string through its terminator: BEL, or ST as
+// ESC \ or U+009C.
+func stringEnd(s string, j int) int {
+	for ; j < len(s); j++ {
+		switch {
+		case s[j] == 0x07:
+			return j + 1
+		case s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\':
+			return j + 2
+		case strings.HasPrefix(s[j:], "\u009c"):
+			return j + len("\u009c")
+		}
+	}
+	return j
 }
