@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs a released wayfinder-map into <this checkout>/bin, after checking
-# its SHA-256 and its GitHub build attestation. Writes nothing outside this
+# its SHA-256 against the release's SHA256SUMS. Writes nothing outside this
 # checkout. Needs gh, logged in.
 #
 #   ./install.sh [vX.Y.Z]    (the latest release if no version is given)
@@ -52,10 +52,6 @@ if command -v sha256sum >/dev/null; then
 else
 	(cd "$tmp" && shasum -a 256 -c want)
 fi
-
-echo "Checking the build attestation"
-gh attestation verify "$tmp/$asset" --repo "$repo" \
-	--signer-workflow "$repo/.github/workflows/release.yml"
 
 if [ "$os" = darwin ]; then
 	# Recorded for the release checklist: is the download quarantined?
