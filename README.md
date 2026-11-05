@@ -31,7 +31,7 @@ The repo comes from the first of these that is set: the `owner/repo` in MAP, `-R
 
 ## Terminals without Kitty graphics
 
-Before it starts, wayfinder-map asks the terminal whether it shows Kitty graphics. If the terminal doesn't answer yes within a second, as in Terminal.app, or in tmux without passthrough, it shows the list instead of the graph. The list has the tickets grouped as frontier, claimed, blocked, then done, with the same details area below. `↑↓` (or `tab`) moves the selection, and `c` and `d` do nothing.
+Before it starts, wayfinder-map asks the terminal whether it shows Kitty graphics. If the terminal doesn't answer yes within a second, as in Terminal.app, or in tmux without passthrough, it shows the list instead of the graph. The list has the tickets grouped as frontier, claimed, blocked, then done, with the same details area below. `↑↓`, `j`/`k` or `tab`/`shift+tab` move the selection, and `c` and `d` do nothing.
 
 `--list` always shows the list. `--list=false` always draws the graph, without asking. Use that if the terminal shows Kitty graphics but doesn't answer the query. Herdr inside iTerm2 shows no images ([herdr #3941](https://github.com/herdrdev/herdr/issues/3941)) but may still answer yes, so use `--list` there.
 
