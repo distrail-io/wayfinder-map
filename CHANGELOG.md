@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/distrail-io/wayfinder-map/compare/v0.2.0...v0.3.0) (2026-11-05)
+
+
+### Features
+
+* find a map: picker, map references and env vars ([#18](https://github.com/distrail-io/wayfinder-map/issues/18)) ([e6fbe20](https://github.com/distrail-io/wayfinder-map/commit/e6fbe205cdb18fdbf6ba7d096dc5b2a7e15f2003)), closes [#9](https://github.com/distrail-io/wayfinder-map/issues/9)
+
 ## [0.2.0](https://github.com/distrail-io/wayfinder-map/compare/v0.1.0...v0.2.0) (2026-11-05)
 
 
