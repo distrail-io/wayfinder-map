@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/distrail-io/wayfinder-map/compare/v0.1.0...v0.2.0) (2026-11-05)
+
+
+### Features
+
+* the map reads right: layout, cards, selection and refresh ([#16](https://github.com/distrail-io/wayfinder-map/issues/16)) ([5f80722](https://github.com/distrail-io/wayfinder-map/commit/5f80722458de09a3193c390073ce773c91c99dfa)), closes [#8](https://github.com/distrail-io/wayfinder-map/issues/8)
+
 ## 0.1.0 (2026-11-05)
 
 
