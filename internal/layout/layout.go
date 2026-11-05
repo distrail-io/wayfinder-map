@@ -33,9 +33,11 @@ const (
 
 func (d Dir) String() string { return [...]string{"LR", "TB"}[d] }
 
+// Node is a box W×H, or with Round set, the circle inside a W×W box.
 type Node struct {
-	ID   int
-	W, H float64
+	ID    int
+	W, H  float64
+	Round bool
 }
 
 type Edge struct{ From, To int }
@@ -61,6 +63,21 @@ type Result struct {
 	Boxes  map[int]Rect
 	Curves []Curve // one per graph edge, in the same order
 	W, H   float64
+}
+
+// Scale is how much r must be scaled to fit a w×h area, but never above
+// maxScale.
+func (r Result) Scale(w, h, maxScale float64) float64 {
+	return math.Min(math.Min(w/r.W, h/r.H), maxScale)
+}
+
+// BestFit returns the direction whose layout draws larger in a w×h area,
+// given the two layouts of one graph. LR wins a tie.
+func BestFit(lr, tb Result, w, h, maxScale float64) Dir {
+	if tb.Scale(w, h, maxScale) > lr.Scale(w, h, maxScale) {
+		return TB
+	}
+	return LR
 }
 
 const (
@@ -89,7 +106,8 @@ type vnode struct {
 	pos        float64 // cross-axis centre
 	cross      float64 // size along the cross axis
 	main       float64 // size along the main axis
-	up, down   []int   // neighbours in the layer before and after
+	round      bool
+	up, down   []int // neighbours in the layer before and after
 }
 
 // dagEdge is a graph edge as laid out: pointing forward, through a chain of
@@ -128,7 +146,7 @@ func Layered(g Graph, dir Dir) Result {
 func (l *layered) addNodes(g Graph) map[int]int {
 	index := make(map[int]int, len(g.Nodes))
 	for _, n := range g.Nodes {
-		v := &vnode{id: n.ID, cross: n.H, main: n.W}
+		v := &vnode{id: n.ID, cross: n.H, main: n.W, round: n.Round}
 		if l.dir == TB {
 			v.cross, v.main = n.W, n.H
 		}
@@ -661,6 +679,8 @@ func (l *layered) route(e dagEdge, port [2]float64) []Point {
 	from, to := l.nodes[e.from], l.nodes[e.to]
 	_, fromEnd := l.sides(e.from)
 	toStart, _ := l.sides(e.to)
+	fromEnd -= from.inset(port[0])
+	toStart += to.inset(port[1])
 	type mc struct{ main, cross float64 }
 	way := []mc{{fromEnd, from.pos + port[0]}, {l.bandEnd[from.layer], from.pos + port[0]}}
 	for _, d := range e.chain[1 : len(e.chain)-1] {
@@ -684,10 +704,21 @@ func (l *layered) selfLoop(v int) []Point {
 	n := l.nodes[v]
 	_, end := l.sides(v)
 	d, reach := n.cross*0.35, l.mainGap*0.45
+	end -= n.inset(d)
 	return []Point{
 		l.at(end, n.pos-d),
 		l.at(end+reach, n.pos-d-reach*0.3),
 		l.at(end+reach, n.pos+d+reach*0.3),
 		l.at(end, n.pos+d),
 	}
+}
+
+// inset is how far inside its box's side a round node's circle lies, off
+// centre along the cross axis; zero for a box.
+func (n *vnode) inset(off float64) float64 {
+	if !n.round {
+		return 0
+	}
+	r := n.main / 2
+	return r - math.Sqrt(max(0, r*r-off*off))
 }

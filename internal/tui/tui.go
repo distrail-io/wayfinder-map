@@ -1,7 +1,7 @@
 // Package tui is the Bubble Tea app. A picker lists the repo's open maps; a
-// map is shown as a Kitty-graphics image, with the selected ticket's details
-// and a status line below. Both refresh on an interval, and the map is
-// redrawn only when it changes.
+// map is shown as a Kitty-graphics image, or as a list grouped by state,
+// with the selected ticket's details and a status line below. Both refresh
+// on an interval, and the map is redrawn only when it changes.
 package tui
 
 import (
@@ -36,12 +36,12 @@ type Config struct {
 	// Interval is how often the map is reloaded. Zero means DefaultInterval.
 	Interval time.Duration
 
-	// Look and List are how the map is shown. Only cards are drawn so far,
-	// and List is not yet honoured.
+	// Look is how the graph draws tickets; c toggles it. List shows the
+	// tickets as text instead, for a terminal without Kitty graphics.
 	Look draw.Look
 	List bool
-	// Dir is the graph's direction, unless AutoDir picks the one that fits
-	// best, which is LR for now.
+	// Dir is the graph's direction, unless AutoDir picks the one that draws
+	// larger in the pane, again on every resize, until d toggles it.
 	Dir     layout.Dir
 	AutoDir bool
 
@@ -65,7 +65,10 @@ type Model struct {
 
 	number     int // the map shown, or being loaded
 	shown      *wayfinder.Map
-	res        layout.Result
+	look       draw.Look
+	layouts    [2]layout.Result // the shown map in the look, by direction
+	dir        layout.Dir
+	autoDir    bool
 	sel        int // the selected ticket's number
 	err        error
 	loading    bool
@@ -118,7 +121,8 @@ func New(cfg Config) Model {
 	if cfg.Open == nil {
 		cfg.Open = openURL
 	}
-	return Model{cfg: cfg, number: cfg.Number, picking: cfg.Number == 0, loading: true}
+	return Model{cfg: cfg, number: cfg.Number, picking: cfg.Number == 0, loading: true,
+		look: cfg.Look, dir: cfg.Dir, autoDir: cfg.AutoDir}
 }
 
 func stdoutCellSize(cols, rows int) (int, int) {
@@ -188,11 +192,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.cols, m.rows = msg.Width, msg.Height
 		m.cellW, m.cellH = m.cfg.CellSize(m.cols, m.rows)
-		return m.redraw()
+		return m.fit().redraw()
 	case drawMsg:
-		if int(msg) == m.gen && m.shown != nil && m.cols > 0 && m.graphRows() > 0 {
-			return m, tea.Raw(m.image())
+		if int(msg) != m.gen || m.cfg.List || m.shown == nil {
+			break
 		}
+		if m.cols <= 0 || m.graphRows() <= 0 {
+			// No room for the graph: don't leave the old image over the text.
+			return m, tea.Raw(kitty.Clear)
+		}
+		return m, tea.Raw(m.image())
 	case tea.KeyPressMsg:
 		return m.key(msg.String())
 	}
@@ -240,7 +249,7 @@ func (m Model) loaded(msg loadedMsg) (tea.Model, tea.Cmd) {
 		return m, poll
 	}
 	m.shown = msg.m
-	m.res = layout.Layered(draw.Graph(m.shown), m.dir())
+	m = m.relayout()
 	if m.shown.Ticket(m.sel) == nil {
 		m.sel = firstSelection(m.shown)
 	}
@@ -248,12 +257,33 @@ func (m Model) loaded(msg loadedMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(poll, redraw)
 }
 
-func (m Model) dir() layout.Dir {
-	if m.cfg.AutoDir {
-		return layout.LR
+// relayout lays the shown map out both ways in the look, then fits it.
+// The list needs no layout.
+func (m Model) relayout() Model {
+	if m.cfg.List {
+		return m
 	}
-	return m.cfg.Dir
+	g := draw.Graph(m.shown, m.look)
+	m.layouts = [2]layout.Result{layout.LR: layout.Layered(g, layout.LR), layout.TB: layout.Layered(g, layout.TB)}
+	return m.fit()
 }
+
+// fit picks the direction that draws larger in the graph area, while it is
+// automatic.
+func (m Model) fit() Model {
+	if m.autoDir && m.shown != nil && !m.cfg.List {
+		w, h := float64(m.cols*m.cellW), float64(m.graphRows()*m.cellH)
+		m.dir = layout.BestFit(m.layouts[layout.LR], m.layouts[layout.TB], w, h, m.maxScale())
+	}
+	return m
+}
+
+// res is the layout drawn.
+func (m Model) res() layout.Result { return m.layouts[m.dir] }
+
+// maxScale stops a small map from being drawn larger than the text around
+// it.
+func (m Model) maxScale() float64 { return float64(m.cellH) / 18 * 1.25 }
 
 // schedulePoll fetches again after the interval, superseding any poll
 // already scheduled.
@@ -286,7 +316,16 @@ func (m Model) back() (tea.Model, tea.Cmd) {
 	m.pollGen++
 	m.gen++
 	m, fetch := m.fetch()
-	return m, tea.Batch(tea.Raw(kitty.Clear), fetch)
+	return m, tea.Batch(m.clear(), fetch)
+}
+
+// clear deletes the image, if there may be one; a terminal without Kitty
+// graphics might print the escape.
+func (m Model) clear() tea.Cmd {
+	if m.cfg.List {
+		return nil
+	}
+	return tea.Raw(kitty.Clear)
 }
 
 // firstSelection is the first frontier ticket, else the first ticket.
@@ -305,7 +344,7 @@ func firstSelection(mp *wayfinder.Map) int {
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "q", "ctrl+c":
-		return m, tea.Sequence(tea.Raw(kitty.Clear), tea.Quit)
+		return m, tea.Sequence(m.clear(), tea.Quit)
 	case "r":
 		if m.loading {
 			return m, nil
@@ -321,10 +360,20 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	if m.shown == nil || m.sel == 0 {
 		return m, nil
 	}
+	if k == "o" || k == "enter" {
+		return m, m.open(m.shown.Repo, m.sel)
+	}
+	if m.cfg.List {
+		return m.listKey(k)
+	}
 	sel := m.sel
 	switch k {
-	case "o", "enter":
-		return m, m.open(m.shown.Repo, m.sel)
+	case "c":
+		m.look = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}[m.look]
+		return m.relayout().redraw()
+	case "d":
+		m.dir, m.autoDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[m.dir], false
+		return m.redraw()
 	case "tab", "shift+tab":
 		sel = m.cycle(k == "tab")
 	case "left", "right", "up", "down":
@@ -335,6 +384,38 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	}
 	m.sel = sel
 	return m.redraw()
+}
+
+// listKey moves the selection through the list, stopping at its ends.
+func (m Model) listKey(k string) (tea.Model, tea.Cmd) {
+	ts := listOrder(m.shown)
+	i := slices.IndexFunc(ts, func(t *wayfinder.Ticket) bool { return t.Number == m.sel })
+	switch k {
+	case "up", "k", "shift+tab":
+		i = max(i-1, 0)
+	case "down", "j", "tab":
+		i = min(i+1, len(ts)-1)
+	}
+	m.sel = ts[i].Number
+	return m, nil
+}
+
+// listStates are the list's groups, in order: what can be taken first, what
+// is done last.
+var listStates = []wayfinder.State{wayfinder.Frontier, wayfinder.Claimed, wayfinder.Blocked, wayfinder.Done}
+
+// listOrder is the tickets as the list shows them: grouped by state, by
+// number within each.
+func listOrder(mp *wayfinder.Map) []*wayfinder.Ticket {
+	var ts []*wayfinder.Ticket
+	for _, s := range listStates {
+		for _, t := range mp.Tickets {
+			if t.State == s {
+				ts = append(ts, t)
+			}
+		}
+	}
+	return ts
 }
 
 func (m Model) pickerKey(k string) (tea.Model, tea.Cmd) {
@@ -373,7 +454,7 @@ func (m Model) cycle(forward bool) int {
 		ns = append(ns, t.Number)
 	}
 	slices.SortStableFunc(ns, func(a, b int) int {
-		pa, pb := m.res.Boxes[a], m.res.Boxes[b]
+		pa, pb := m.res().Boxes[a], m.res().Boxes[b]
 		if pa.X != pb.X {
 			return cmp.Compare(pa.X, pb.X)
 		}
@@ -390,10 +471,10 @@ func (m Model) cycle(forward bool) int {
 // in line with the selection. It stays put if there is none.
 func (m Model) nearest(arrow string) int {
 	d := map[string]layout.Point{"left": {X: -1}, "right": {X: 1}, "up": {Y: -1}, "down": {Y: 1}}[arrow]
-	from := centre(m.res.Boxes[m.sel])
+	from := centre(m.res().Boxes[m.sel])
 	best, bestScore := m.sel, math.Inf(1)
 	for _, t := range m.shown.Tickets {
-		c := centre(m.res.Boxes[t.Number])
+		c := centre(m.res().Boxes[t.Number])
 		along := (c.X-from.X)*d.X + (c.Y-from.Y)*d.Y
 		if t.Number == m.sel || along <= 1 {
 			continue
@@ -434,8 +515,7 @@ func (m Model) warnings() []string {
 }
 
 func (m Model) image() string {
-	maxScale := float64(m.cellH) / 18 * 1.25
-	img := draw.Render(m.shown, m.res, m.sel, m.cols*m.cellW, m.graphRows()*m.cellH, maxScale)
+	img := draw.Render(m.shown, m.res(), m.look, m.sel, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := enc.Encode(&buf, img); err != nil {
@@ -449,7 +529,13 @@ func (m Model) View() tea.View {
 		return m.pickerView()
 	}
 	var b strings.Builder
-	b.WriteString(strings.Repeat("\n", max(0, m.graphRows())))
+	if m.cfg.List && m.shown != nil {
+		for _, line := range m.listRows() {
+			b.WriteString(line + "\n")
+		}
+	} else {
+		b.WriteString(strings.Repeat("\n", max(0, m.graphRows())))
+	}
 	for _, line := range append(m.details(), m.warnings()...) {
 		b.WriteString(line + "\n")
 	}
@@ -457,6 +543,35 @@ func (m Model) View() tea.View {
 	v := tea.NewView(b.String())
 	v.AltScreen = true
 	return v
+}
+
+// listRows fills the graph area with the tickets grouped by state, a
+// heading over each group, scrolled so the selection is in view.
+func (m Model) listRows() []string {
+	count := map[wayfinder.State]int{}
+	for _, t := range m.shown.Tickets {
+		count[t.State]++
+	}
+	var rows []string
+	at := 0
+	ts := listOrder(m.shown)
+	for i, t := range ts {
+		if i == 0 || t.State != ts[i-1].State {
+			heading := truncate(fmt.Sprintf("%s (%d)", t.State, count[t.State]), m.cols-3)
+			rows = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m")
+		}
+		row := fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title)
+		if t.Number == m.sel {
+			at = len(rows)
+			rows = append(rows, "\x1b[1m"+truncate("› "+row, m.cols)+"\x1b[0m")
+		} else {
+			rows = append(rows, truncate("  "+row, m.cols))
+		}
+	}
+	fit := max(0, m.graphRows())
+	from := max(0, at-fit+1)
+	rows = rows[from:min(len(rows), from+fit)]
+	return append(rows, make([]string, fit-len(rows))...)
 }
 
 // pickerView is a header, a row per map with the cursor's in bold, a hint
@@ -580,18 +695,27 @@ func (m Model) legend() string {
 		return true
 	}
 	for _, s := range []wayfinder.State{wayfinder.Done, wayfinder.Claimed, wayfinder.Frontier, wayfinder.Blocked} {
-		c := draw.FillOf(s)
 		name := s.String()
-		if !add(fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m %s  ", c.R, c.G, c.B, name), 2+1+len([]rune(name))+2) {
+		if !add(swatch(s)+" "+name+"  ", 2+1+len([]rune(name))+2) {
 			return b.String()
 		}
 	}
-	for _, s := range []string{"┄ closed blocker  ", "←↑↓→ tab select · o open · b back · r refresh · q quit"} {
+	keys := []string{"┄ closed blocker  ", "←↑↓→ tab select · c look · d direction · o open · b back · r refresh · q quit"}
+	if m.cfg.List {
+		keys = []string{"↑↓ select · o open · b back · r refresh · q quit"}
+	}
+	for _, s := range keys {
 		if !add(s, len([]rune(s))) {
 			break
 		}
 	}
 	return b.String()
+}
+
+// swatch is two cells in the state's colour.
+func swatch(s wayfinder.State) string {
+	c := draw.FillOf(s)
+	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B)
 }
 
 func orNone(xs []string) string {

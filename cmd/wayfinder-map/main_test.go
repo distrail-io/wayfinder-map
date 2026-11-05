@@ -43,7 +43,7 @@ func TestEnvBeatsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := options{look: draw.Compact, dir: layout.TB, interval: 45 * time.Second, list: true}
+	want := options{look: draw.Compact, dir: layout.TB, interval: 45 * time.Second, list: setBool{v: true, set: true}}
 	if got != want {
 		t.Errorf("parseOptions = %+v, want %+v", got, want)
 	}
@@ -59,7 +59,7 @@ func TestFlagBeatsEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := options{look: draw.Cards, dir: layout.LR, interval: 20 * time.Second}
+	want := options{look: draw.Cards, dir: layout.LR, interval: 20 * time.Second, list: setBool{set: true}}
 	if got != want {
 		t.Errorf("parseOptions = %+v, want %+v", got, want)
 	}
@@ -125,5 +125,33 @@ func TestMapForms(t *testing.T) {
 	}
 	if _, err := parseOptions([]string{"https://github.com/a/b/pull/3"}, env(nil)); err == nil {
 		t.Error("a pull request URL was accepted")
+	}
+}
+
+// Without --list or its variable, the terminal is asked whether it shows
+// Kitty graphics; set either way, it isn't.
+func TestListUnlessTheTerminalShowsImages(t *testing.T) {
+	for _, c := range []struct {
+		args   []string
+		env    map[string]string
+		images bool // what the probe finds
+		want   bool
+		probed bool
+	}{
+		{nil, nil, true, false, true},
+		{nil, nil, false, true, true},
+		{[]string{"--list"}, nil, true, true, false},
+		{[]string{"--list=false"}, nil, false, false, false},
+		{nil, map[string]string{"WAYFINDER_MAP_LIST": "0"}, false, false, false},
+	} {
+		o, err := parseOptions(c.args, env(c.env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		probed := false
+		got := o.showList(func() bool { probed = true; return c.images })
+		if got != c.want || probed != c.probed {
+			t.Errorf("%q %v, images %v: list %v, probed %v; want %v, %v", c.args, c.env, c.images, got, probed, c.want, c.probed)
+		}
 	}
 }

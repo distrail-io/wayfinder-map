@@ -43,5 +43,5 @@ _Avoid_: Ready (except as a short count label), available
 The list of a repo's open maps that you choose from when no map is named.
 
 **Look**:
-How tickets are drawn in the graph: as **cards** (box with title) or **compact** (circle with number).
+How tickets are drawn in the graph: as **cards** (box with title) or **compact** (circle with type icon and number).
 _Avoid_: Theme, style, mode

@@ -20,6 +20,7 @@ import (
 
 	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/github"
+	"github.com/distrail-io/wayfinder-map/internal/kitty"
 	"github.com/distrail-io/wayfinder-map/internal/layout"
 	"github.com/distrail-io/wayfinder-map/internal/tui"
 )
@@ -27,6 +28,10 @@ import (
 // minInterval keeps polling well inside GitHub's rate limit: each load costs
 // about 3 of 5,000 points an hour.
 const minInterval = 10 * time.Second
+
+// probeTimeout is how long the terminal has to answer the Kitty graphics
+// probe. Terminals answer in milliseconds; this only bounds one that doesn't.
+const probeTimeout = time.Second
 
 // version is set at release build time with -ldflags "-X main.version=…".
 var version = "dev"
@@ -57,7 +62,7 @@ func run(args []string, getenv func(string) string, stdout io.Writer) error {
 		Look:     o.look,
 		Dir:      o.dir,
 		AutoDir:  o.autoDir,
-		List:     o.list,
+		List:     o.showList(func() bool { return kitty.Probe(probeTimeout) }),
 	})).Run()
 	return err
 }
@@ -69,8 +74,17 @@ type options struct {
 	dir      layout.Dir
 	autoDir  bool // pick the direction that fits the pane
 	interval time.Duration
-	list     bool
+	list     setBool
 	version  bool
+}
+
+// showList is whether to list the tickets rather than draw the graph: as
+// set, else if the terminal doesn't show Kitty graphics.
+func (o options) showList(images func() bool) bool {
+	if o.list.set {
+		return o.list.v
+	}
+	return !images()
 }
 
 // envVars set the flags they name. A flag beats its variable, which beats
@@ -94,7 +108,7 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	fs.Var((*lookValue)(&o.look), "look", "how tickets are drawn: cards or compact (default cards)")
 	fs.Var(dirValue{&o.dir, &o.autoDir}, "dir", "the graph's direction: auto, lr or tb (default auto)")
 	fs.Var((*intervalValue)(&o.interval), "interval", "how often to reload the map, at least "+minInterval.String())
-	fs.Var((*boolValue)(&o.list), "list", "list the tickets as text instead of drawing the graph")
+	fs.Var(&o.list, "list", "list the tickets as text instead of drawing the graph (default: if the terminal lacks Kitty graphics)")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	for _, e := range envVars {
 		if v := getenv(e.name); v != "" {
@@ -126,8 +140,9 @@ const usage = `usage: wayfinder-map [MAP] [-R owner/repo] [--look cards|compact]
 
 MAP is 123, #123, owner/repo#123 or an issue URL; without it, a picker lists
 the repo's open maps. WAYFINDER_MAP_LOOK, WAYFINDER_MAP_DIR,
-WAYFINDER_MAP_INTERVAL and WAYFINDER_MAP_LIST=1 set the flags of those names;
-a flag beats its variable.
+WAYFINDER_MAP_INTERVAL and WAYFINDER_MAP_LIST (1 or 0) set the flags of those
+names; a flag beats its variable. Unless --list is set either way, the
+tickets are listed if the terminal doesn't say it shows Kitty graphics.
 `
 
 type lookValue draw.Look
@@ -188,17 +203,18 @@ func (v *intervalValue) Set(s string) error {
 	return nil
 }
 
-type boolValue bool
+// setBool is a bool flag that knows whether it was set.
+type setBool struct{ v, set bool }
 
-func (v *boolValue) String() string   { return strconv.FormatBool(bool(*v)) }
-func (v *boolValue) IsBoolFlag() bool { return true }
+func (b *setBool) String() string   { return strconv.FormatBool(b.v) }
+func (b *setBool) IsBoolFlag() bool { return true }
 
-func (v *boolValue) Set(s string) error {
-	b, err := strconv.ParseBool(s)
+func (b *setBool) Set(s string) error {
+	v, err := strconv.ParseBool(s)
 	if err != nil {
 		return errors.New("want 1 or 0, or true or false")
 	}
-	*v = boolValue(b)
+	b.v, b.set = v, true
 	return nil
 }
 

@@ -4,4 +4,4 @@ The map view is a raster image (drawn with `golang.org/x/image`) placed with the
 
 ## Consequences
 
-Image output must wait for Bubble Tea's frame (~60 ms) and track cell pixel size via `TIOCGWINSZ`. Herdr inside iTerm2 does not show images (herdr #3941), so those users get the list.
+Image output must wait for Bubble Tea's frame (~60 ms) and track cell pixel size via `TIOCGWINSZ`. Herdr inside iTerm2 does not show images (herdr #3941) but may still pass the probe, so those users must ask for the list with `--list`.
