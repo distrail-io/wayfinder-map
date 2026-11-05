@@ -37,7 +37,7 @@ func fixture(t testing.TB, number int) layout.Graph {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return draw.Graph(m)
+	return draw.Graph(m, draw.Cards)
 }
 
 func randomDAG(seed uint64, n int) layout.Graph {
@@ -239,5 +239,76 @@ func TestLayeredEmpty(t *testing.T) {
 	res := layout.Layered(layout.Graph{}, layout.LR)
 	if len(res.Boxes) != 0 || res.W <= 0 || res.H <= 0 {
 		t.Errorf("empty graph gave %+v", res)
+	}
+}
+
+// line is n nodes in a chain, 1 → 2 → … → n.
+func line(n int) layout.Graph {
+	g := layout.Graph{}
+	for i := 1; i <= n; i++ {
+		g.Nodes = append(g.Nodes, layout.Node{ID: i, W: 120, H: 40})
+		if i > 1 {
+			g.Edges = append(g.Edges, layout.Edge{From: i - 1, To: i})
+		}
+	}
+	return g
+}
+
+func TestBestFitPicksTheDirectionThatDrawsLarger(t *testing.T) {
+	g := line(5)
+	lr, tb := layout.Layered(g, layout.LR), layout.Layered(g, layout.TB)
+	for _, c := range []struct {
+		name     string
+		w, h     float64
+		maxScale float64
+		want     layout.Dir
+	}{
+		{"wide pane", 1600, 300, 10, layout.LR},
+		{"tall pane", 300, 1600, 10, layout.TB},
+		// Room enough to draw either at the cap: the tie goes to LR.
+		{"both capped", 5000, 5000, 1, layout.LR},
+	} {
+		if got := layout.BestFit(lr, tb, c.w, c.h, c.maxScale); got != c.want {
+			t.Errorf("%s (%vx%v): got %v, want %v", c.name, c.w, c.h, got, c.want)
+		}
+	}
+}
+
+func TestScaleFitsTheAreaUpToTheCap(t *testing.T) {
+	res := layout.Result{W: 200, H: 100}
+	for _, c := range []struct{ w, h, maxScale, want float64 }{
+		{400, 400, 10, 2},  // width binds
+		{400, 50, 10, 0.5}, // height binds
+		{4000, 4000, 1.25, 1.25},
+	} {
+		if got := res.Scale(c.w, c.h, c.maxScale); got != c.want {
+			t.Errorf("Scale(%v, %v, %v) = %v, want %v", c.w, c.h, c.maxScale, got, c.want)
+		}
+	}
+}
+
+// Edges meet a round node on its circle, even where they fan out from it.
+func TestEdgesMeetRoundNodesOnTheirCircle(t *testing.T) {
+	g := layout.Graph{}
+	for i := 1; i <= 7; i++ {
+		g.Nodes = append(g.Nodes, layout.Node{ID: i, W: 60, H: 60, Round: true})
+	}
+	// 1 fans out to 2, 3 and 4, which all feed 5; 6 → 7 is on its own.
+	for _, e := range [][2]int{{1, 2}, {1, 3}, {1, 4}, {2, 5}, {3, 5}, {4, 5}, {6, 7}} {
+		g.Edges = append(g.Edges, layout.Edge{From: e[0], To: e[1]})
+	}
+	for _, dir := range []layout.Dir{layout.LR, layout.TB} {
+		res := layout.Layered(g, dir)
+		for _, c := range res.Curves {
+			for _, end := range []struct {
+				id int
+				p  layout.Point
+			}{{c.From, c.Pts[0]}, {c.To, c.Pts[len(c.Pts)-1]}} {
+				b := res.Boxes[end.id]
+				if d := math.Hypot(end.p.X-(b.X+b.W/2), end.p.Y-(b.Y+b.H/2)); math.Abs(d-30) > 0.01 {
+					t.Errorf("%v: edge %d→%d meets %d at %v, %v from its centre, want 30", dir, c.From, c.To, end.id, end.p, d)
+				}
+			}
+		}
 	}
 }

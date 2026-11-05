@@ -3,6 +3,7 @@ package kitty_test
 import (
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/distrail-io/wayfinder-map/internal/kitty"
 )
@@ -41,5 +42,45 @@ func TestPlaceChunksAt4096(t *testing.T) {
 func TestClear(t *testing.T) {
 	if kitty.Clear != clear {
 		t.Errorf("Clear = %q, want %q", kitty.Clear, clear)
+	}
+}
+
+func TestQueryAsksForGraphicsThenDeviceAttributes(t *testing.T) {
+	// A 1×1 RGB query that stores nothing, then DA1, which every terminal
+	// answers, so a terminal that ignores the query is found out at once.
+	want := "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\" + "\x1b[c"
+	if kitty.Query != want {
+		t.Errorf("Query = %q, want %q", kitty.Query, want)
+	}
+}
+
+func TestSupportedReadsTheRepliesToQuery(t *testing.T) {
+	for _, c := range []struct {
+		name, reply string
+		want        bool
+	}{
+		{"kitty answers OK", "\x1b_Gi=31;OK\x1b\\\x1b[?62;22c", true},
+		{"only device attributes", "\x1b[?62;22;52c", false},
+		{"an error", "\x1b_Gi=31;ENOTSUPPORTED:no\x1b\\\x1b[?62c", false},
+		{"no reply before the timeout", "", false},
+		{"cut off before device attributes", "\x1b_Gi=31;OK\x1b\\", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := kitty.Supported(iotest.OneByteReader(strings.NewReader(c.reply))); got != c.want {
+				t.Errorf("Supported(%q) = %v, want %v", c.reply, got, c.want)
+			}
+		})
+	}
+}
+
+// Whatever follows the replies, such as a key pressed meanwhile, is left
+// for the app to read.
+func TestSupportedStopsAtDeviceAttributes(t *testing.T) {
+	r := strings.NewReader("\x1b_Gi=31;OK\x1b\\\x1b[?62;22cq")
+	if !kitty.Supported(r) {
+		t.Error("not supported")
+	}
+	if r.Len() != 1 {
+		t.Errorf("%d bytes left unread, want the 1 after the replies", r.Len())
 	}
 }

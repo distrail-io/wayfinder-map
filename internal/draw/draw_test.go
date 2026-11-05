@@ -33,9 +33,9 @@ func load(t *testing.T, name string) *wayfinder.Map {
 
 func TestCardsTakeTheirStateColour(t *testing.T) {
 	m := load(t, "edge-cases")
-	res := layout.Layered(draw.Graph(m), layout.LR)
+	res := layout.Layered(draw.Graph(m, draw.Cards), layout.LR)
 	// At scale 1 the image matches layout units exactly.
-	img := draw.Render(m, res, 0, int(res.W), int(res.H), 1)
+	img := draw.Render(m, res, draw.Cards, 0, int(res.W), int(res.H), 1)
 	want := map[wayfinder.State]color.RGBA{
 		wayfinder.Done:     {0x4d, 0x55, 0x60, 0xff},
 		wayfinder.Claimed:  {0x2f, 0x6f, 0xde, 0xff},
@@ -54,10 +54,30 @@ func TestCardsTakeTheirStateColour(t *testing.T) {
 	}
 }
 
+func TestCompactTicketsAreCirclesInTheirStateColour(t *testing.T) {
+	m := load(t, "edge-cases")
+	res := layout.Layered(draw.Graph(m, draw.Compact), layout.LR)
+	img := draw.Render(m, res, draw.Compact, 0, int(res.W), int(res.H), 1)
+	for _, tk := range m.Tickets {
+		b := res.Boxes[tk.Number]
+		if b.W != b.H || b.W >= 100 {
+			t.Fatalf("#%d is %vx%v, want a small square for a circle", tk.Number, b.W, b.H)
+		}
+		// Just inside the bottom of the circle, below the number.
+		if got := img.RGBAAt(int(b.X+b.W/2), int(b.Y+b.H)-3); got != draw.FillOf(tk.State) {
+			t.Errorf("#%d (%v) is drawn %v, want %v", tk.Number, tk.State, got, draw.FillOf(tk.State))
+		}
+		// Its bounding box's corner lies outside the circle.
+		if got := img.RGBAAt(int(b.X)+2, int(b.Y)+2); got.A != 0 {
+			t.Errorf("#%d: the corner of its box is %v, want transparent", tk.Number, got)
+		}
+	}
+}
+
 func TestSelectedTicketHasAYellowRing(t *testing.T) {
 	m := load(t, "214")
-	res := layout.Layered(draw.Graph(m), layout.LR)
-	img := draw.Render(m, res, 218, int(res.W), int(res.H), 1)
+	res := layout.Layered(draw.Graph(m, draw.Cards), layout.LR)
+	img := draw.Render(m, res, draw.Cards, 218, int(res.W), int(res.H), 1)
 	yellow := color.RGBA{0xff, 0xd3, 0x3d, 0xff}
 	for _, n := range []int{217, 218} {
 		b := res.Boxes[n]
@@ -76,23 +96,29 @@ const tolerance = 16
 
 func TestGoldens(t *testing.T) {
 	for _, name := range []string{"152", "175", "214", "edge-cases"} {
-		for _, dir := range []layout.Dir{layout.LR, layout.TB} {
-			t.Run(fmt.Sprint(name, "-", dir), func(t *testing.T) {
-				m := load(t, name)
-				res := layout.Layered(draw.Graph(m), dir)
-				sel := 0
-				for _, tk := range m.Tickets {
-					if tk.State == wayfinder.Frontier {
-						sel = tk.Number
-						break
-					}
-				}
-				// A 160×36-cell pane of 9×18-pixel cells.
-				img := draw.Render(m, res, sel, 1440, 648, 1.25)
-				golden(t, fmt.Sprintf("testdata/map-%s-cards-%s.png", name, dir), img)
-			})
+		for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+			for _, dir := range []layout.Dir{layout.LR, layout.TB} {
+				t.Run(fmt.Sprint(name, "-", look, "-", dir), func(t *testing.T) {
+					goldenMap(t, name, look, dir)
+				})
+			}
 		}
 	}
+}
+
+func goldenMap(t *testing.T, name string, look draw.Look, dir layout.Dir) {
+	m := load(t, name)
+	res := layout.Layered(draw.Graph(m, look), dir)
+	sel := 0
+	for _, tk := range m.Tickets {
+		if tk.State == wayfinder.Frontier {
+			sel = tk.Number
+			break
+		}
+	}
+	// A 160×36-cell pane of 9×18-pixel cells.
+	img := draw.Render(m, res, look, sel, 1440, 648, 1.25)
+	golden(t, fmt.Sprintf("testdata/map-%s-%s-%s.png", name, look, dir), img)
 }
 
 func golden(t *testing.T, path string, got *image.RGBA) {

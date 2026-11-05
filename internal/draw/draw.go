@@ -22,7 +22,7 @@ import (
 )
 
 // Look is how tickets are drawn: as cards (a box with the title) or compact
-// (a circle with the number). Only cards are drawn so far.
+// (a circle with the type icon and number).
 type Look int
 
 const (
@@ -32,8 +32,12 @@ const (
 
 func (l Look) String() string { return [...]string{"cards", "compact"}[l] }
 
-// Card size in layout units; one unit is one pixel at 18px-high cells.
-const cardW, cardH = 230, 66
+// Card size and compact circle diameter in layout units; one unit is one
+// pixel at 18px-high cells.
+const (
+	cardW, cardH = 230, 66
+	circleD      = 62
+)
 
 var (
 	fillOf = map[wayfinder.State]color.RGBA{
@@ -52,12 +56,16 @@ var (
 // FillOf is the card colour of each state, for a legend.
 func FillOf(s wayfinder.State) color.RGBA { return fillOf[s] }
 
-// Graph is the map as a layout graph: one card per ticket, one edge per
-// in-map blocker.
-func Graph(m *wayfinder.Map) layout.Graph {
+// Graph is the map as a layout graph in a look: one node per ticket, one
+// edge per in-map blocker.
+func Graph(m *wayfinder.Map, look Look) layout.Graph {
 	var g layout.Graph
 	for _, t := range m.Tickets {
-		g.Nodes = append(g.Nodes, layout.Node{ID: t.Number, W: cardW, H: cardH})
+		n := layout.Node{ID: t.Number, W: cardW, H: cardH}
+		if look == Compact {
+			n = layout.Node{ID: t.Number, W: circleD, H: circleD, Round: true}
+		}
+		g.Nodes = append(g.Nodes, n)
 	}
 	for _, e := range m.Edges {
 		g.Edges = append(g.Edges, layout.Edge{From: e.From, To: e.To})
@@ -65,11 +73,11 @@ func Graph(m *wayfinder.Map) layout.Graph {
 	return g
 }
 
-// Render draws the layout of Graph(m) centred in a W×H image, scaled to fit
-// but never above maxScale. Ticket sel, if any, gets a ring.
-func Render(m *wayfinder.Map, res layout.Result, sel int, W, H int, maxScale float64) *image.RGBA {
+// Render draws the layout of Graph(m, look) centred in a W×H image, scaled
+// to fit but never above maxScale. Ticket sel, if any, gets a ring.
+func Render(m *wayfinder.Map, res layout.Result, look Look, sel int, W, H int, maxScale float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
-	s := math.Min(math.Min(float64(W)/res.W, float64(H)/res.H), maxScale)
+	s := res.Scale(float64(W), float64(H), maxScale)
 	ox, oy := (float64(W)-res.W*s)/2, (float64(H)-res.H*s)/2
 	pt := func(p layout.Point) layout.Point { return layout.Point{X: ox + p.X*s, Y: oy + p.Y*s} }
 
@@ -92,9 +100,36 @@ func Render(m *wayfinder.Map, res layout.Result, sel int, W, H int, maxScale flo
 	for _, t := range m.Tickets {
 		b := res.Boxes[t.Number]
 		p := pt(layout.Point{X: b.X, Y: b.Y})
-		card(img, t, p.X, p.Y, b.W*s, b.H*s, s, t.Number == sel)
+		if look == Compact {
+			circle(img, t, p.X+b.W*s/2, p.Y+b.H*s/2, b.W*s/2, s, t.Number == sel)
+		} else {
+			card(img, t, p.X, p.Y, b.W*s, b.H*s, s, t.Number == sel)
+		}
 	}
 	return img
+}
+
+// circle draws a ticket as a disc of radius r filled by state, with its
+// type icon above its number.
+func circle(img *image.RGBA, t *wayfinder.Ticket, cx, cy, r, s float64, selected bool) {
+	if selected {
+		p := &path{}
+		discTo(p, cx, cy, r+4*s)
+		discBackTo(p, cx, cy, r+s)
+		fill(img, p, ringCol)
+	}
+	p := &path{}
+	discTo(p, cx, cy, r)
+	fill(img, p, fillOf[t.State])
+	tc := textOn
+	if t.State == wayfinder.Done {
+		tc = textDone
+	}
+	is := 20 * s
+	icon(img, t.Type, cx-is/2, cy-is-1*s, is, tc)
+	fs := 11.5 * s
+	num := fmt.Sprintf("#%d", t.Number)
+	text(img, cx-measure(num, fs, true)/2, cy+fs+2*s, num, fs, true, tc)
 }
 
 // card draws a ticket as a rounded box filled by state, with its type icon,
@@ -277,6 +312,17 @@ func discTo(p *path, cx, cy, r float64) {
 	p.cubeTo(cx-k, cy-r, cx-r, cy-k, cx-r, cy)
 	p.cubeTo(cx-r, cy+k, cx-k, cy+r, cx, cy+r)
 	p.cubeTo(cx+k, cy+r, cx+r, cy+k, cx+r, cy)
+	p.close()
+}
+
+// discBackTo adds a circle wound against discTo's, to punch a hole in it.
+func discBackTo(p *path, cx, cy, r float64) {
+	k := 0.5523 * r
+	p.moveTo(cx+r, cy)
+	p.cubeTo(cx+r, cy+k, cx+k, cy+r, cx, cy+r)
+	p.cubeTo(cx-k, cy+r, cx-r, cy+k, cx-r, cy)
+	p.cubeTo(cx-r, cy-k, cx-k, cy-r, cx, cy-r)
+	p.cubeTo(cx+k, cy-r, cx+r, cy-k, cx+r, cy)
 	p.close()
 }
 

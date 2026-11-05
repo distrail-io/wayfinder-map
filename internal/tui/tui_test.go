@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/tui"
 )
 
@@ -131,17 +132,22 @@ type app struct {
 
 func start(t *testing.T, src *fakeSource, number int) *app {
 	t.Helper()
+	return startWith(t, src, tui.Config{Number: number})
+}
+
+// startWith starts the app with cfg, faking its source, clock, cell size
+// and browser.
+func startWith(t *testing.T, src *fakeSource, cfg tui.Config) *app {
+	t.Helper()
 	a := &app{t: t, src: src, clock: &clock{}}
-	a.m = tui.New(tui.Config{
-		Source:   src,
-		Number:   number,
-		CellSize: func(int, int) (int, int) { return 9, 18 },
-		After:    a.clock.After,
-		Open: func(url string) error {
-			a.opened = append(a.opened, url)
-			return nil
-		},
-	})
+	cfg.Source = src
+	cfg.CellSize = func(int, int) (int, int) { return 9, 18 }
+	cfg.After = a.clock.After
+	cfg.Open = func(url string) error {
+		a.opened = append(a.opened, url)
+		return nil
+	}
+	a.m = tui.New(cfg)
 	for _, msg := range run(a.m.Init()) {
 		a.send(msg)
 	}
@@ -573,5 +579,169 @@ func TestAFailedListingIsRetried(t *testing.T) {
 	a.wait(30 * time.Second)
 	if src.lists != 2 || !strings.Contains(a.view(), "› #175 · ") || strings.Contains(a.view(), "network down") {
 		t.Errorf("listed %d times; view:\n%s", src.lists, a.view())
+	}
+}
+
+// selected is the number of the ticket the details area shows.
+func (a *app) selected() int {
+	a.t.Helper()
+	v := a.view()
+	i := strings.Index(v, "\n\x1b[1m#")
+	if i < 0 {
+		a.t.Fatalf("no ticket is selected:\n%s", v)
+	}
+	var n int
+	fmt.Sscanf(v[i+len("\n\x1b[1m#"):], "%d", &n)
+	return n
+}
+
+// line is 1 → 2 → 3 → 4 → 5.
+func line() []byte {
+	return mapJSON(map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"},
+		map[int][]int{2: {1}, 3: {2}, 4: {3}, 5: {4}})
+}
+
+func TestCTogglesTheLook(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
+	a := start(t, src, 214)
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	cards := a.wait(time.Second)
+	a.key("c")
+	compact := a.wait(time.Second)
+	if placements(compact) != 1 || compact[0] == cards[0] {
+		t.Fatalf("c didn't place a different image")
+	}
+	a.key("c")
+	if again := a.wait(time.Second); len(again) != 1 || again[0] != cards[0] {
+		t.Errorf("c again didn't bring the cards back")
+	}
+}
+
+func TestCompactLookFromConfig(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
+	cards := start(t, src, 214)
+	cards.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	compact := startWith(t, src, tui.Config{Number: 214, Look: draw.Compact})
+	compact.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if a, b := cards.wait(time.Second), compact.wait(time.Second); slices.Equal(a, b) {
+		t.Errorf("Look: Compact drew the cards")
+	}
+}
+
+// In a wide pane the line runs left to right; resized tall, it runs top to
+// bottom.
+func TestAutoDirectionRefitsOnResize(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{1: line()}}
+	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	a.send(tea.WindowSizeMsg{Width: 200, Height: 30})
+	a.wait(time.Second)
+	if a.key("right"); a.selected() != 2 {
+		t.Fatalf("in a wide pane, right from #1 selected #%d, want #2", a.selected())
+	}
+	a.key("left")
+	a.send(tea.WindowSizeMsg{Width: 30, Height: 100})
+	raw := a.wait(time.Second)
+	if placements(raw) != 1 || !strings.Contains(raw[0], ",c=30,r=94,") {
+		t.Errorf("resizing didn't place the image over the new 30×94 graph area: %q", raw)
+	}
+	if a.key("down"); a.selected() != 2 {
+		t.Errorf("in a tall pane, down from #1 selected #%d, want #2", a.selected())
+	}
+}
+
+func TestDTogglesTheDirectionAndStopsAuto(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{1: line()}}
+	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	a.send(tea.WindowSizeMsg{Width: 200, Height: 30})
+	a.wait(time.Second)
+	a.key("d")
+	if raw := a.wait(time.Second); placements(raw) != 1 {
+		t.Errorf("d placed %d images, want 1", placements(raw))
+	}
+	if a.key("down"); a.selected() != 2 {
+		t.Fatalf("after d, down from #1 selected #%d, want #2", a.selected())
+	}
+	a.key("up")
+	// A pane that fits left to right no longer re-picks it.
+	a.send(tea.WindowSizeMsg{Width: 220, Height: 30})
+	a.wait(time.Second)
+	if a.key("down"); a.selected() != 2 {
+		t.Errorf("a resize after d changed the direction")
+	}
+	a.key("d")
+	if a.key("left"); a.selected() != 1 {
+		t.Errorf("d again didn't go back to left to right")
+	}
+}
+
+func TestListShowsTicketsGroupedByState(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-edge-cases.json")}}
+	a := startWith(t, src, tui.Config{Number: 214, List: true})
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 40})
+	if raw := a.wait(time.Second); len(raw) != 0 {
+		t.Errorf("the list placed an image: %q", raw)
+	}
+	v := a.view()
+	// Frontier first, done last; the first frontier ticket is selected.
+	var at []int
+	for _, h := range []string{"frontier (2)", "claimed (1)", "blocked (4)", "done (1)"} {
+		i := strings.Index(v, h)
+		if i < 0 {
+			t.Fatalf("list lacks heading %q:\n%s", h, v)
+		}
+		at = append(at, i)
+	}
+	if !slices.IsSorted(at) {
+		t.Errorf("headings out of order:\n%s", v)
+	}
+	for _, want := range []string{"› #217 ? · ", "  #215 grilling · Where does standalone Sandcastle live"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("list lacks %q:\n%s", want, v)
+		}
+	}
+	if i := strings.Index(v, "#215 grilling"); i < at[1] || i > at[2] {
+		t.Errorf("claimed #215 isn't under its heading:\n%s", v)
+	}
+}
+
+func TestListSelectsAndOpensInListOrder(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-edge-cases.json")}}
+	a := startWith(t, src, tui.Config{Number: 214, List: true})
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 40})
+	var got []int
+	for range 8 {
+		got = append(got, a.selected())
+		a.key("down")
+	}
+	// Frontier, claimed, blocked, done; by number within each.
+	if want := []int{217, 218, 215, 219, 220, 221, 222, 216}; !slices.Equal(got, want) {
+		t.Errorf("down walked %v, want %v", got, want)
+	}
+	if a.key("down"); a.selected() != 216 {
+		t.Errorf("down past the end moved to #%d", a.selected())
+	}
+	a.key("up")
+	a.key("o")
+	if want := []string{"https://github.com/banked/ask-barry/issues/222"}; !slices.Equal(a.opened, want) {
+		t.Errorf("opened %q, want %q", a.opened, want)
+	}
+}
+
+// A terminal without Kitty graphics may print the escapes as text.
+func TestListNeverWritesKittyEscapes(t *testing.T) {
+	src := &fakeSource{list: fixture(t, "list-ask-barry.json"), maps: map[int][]byte{214: fixture(t, "map-214.json")}}
+	a := startWith(t, src, tui.Config{Number: 214, List: true})
+	var raw []string
+	raw = append(raw, a.send(tea.WindowSizeMsg{Width: 100, Height: 30})...)
+	raw = append(raw, a.wait(time.Second)...)
+	for _, k := range []string{"c", "d", "r", "b", "enter", "q"} {
+		raw = append(raw, a.key(k)...)
+		raw = append(raw, a.wait(time.Second)...)
+	}
+	if strings.Contains(strings.Join(raw, ""), "\x1b_G") {
+		t.Errorf("wrote Kitty escapes: %q", raw)
+	}
+	if !a.quit {
+		t.Error("q didn't quit")
 	}
 }
