@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/distrail-io/wayfinder-map/compare/v0.3.0...v0.4.0) (2026-11-05)
+
+
+### Features
+
+* fits any pane and terminal: compact look, best fit and list fallback ([#20](https://github.com/distrail-io/wayfinder-map/issues/20)) ([a87c235](https://github.com/distrail-io/wayfinder-map/commit/a87c2351a78f1ea4b0a8a22fe8a8a24cc6bc54fc))
+
 ## [0.3.0](https://github.com/distrail-io/wayfinder-map/compare/v0.2.0...v0.3.0) (2026-11-05)
 
 
