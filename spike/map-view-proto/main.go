@@ -1,13 +1,15 @@
-// PROTOTYPE, throwaway: wayfinder-map#3. Three looks of the map graph, switchable live:
+// PROTOTYPE, throwaway: wayfinder-map#3 and #6. Looks of the map graph and layout engines, switchable live:
 //
 //	[ / ]  look: cards | compact | lanes
-//	l      layout engine: dot (Graphviz positions+splines) | layered (hand-rolled)
+//	l      layout engine: dot (Graphviz binary) | sugiyama (#6 option B, ours) | layered (#3 naive)
+//	v      versus: dot on the left, sugiyama on the right
 //	d      direction: LR | TB (cards and compact)
 //	m      next fixture map
 //	←↑↓→ / tab   select ticket     o  open in browser     q  quit
 //
 // Run: cd spike/map-view-proto && go run .
 // Dump PNGs instead of running the TUI: go run . -png out.png -look cards -layout dot -map 175
+// Side-by-side PNGs for every fixture, look and direction: go run . -compare out/
 package main
 
 import (
@@ -15,6 +17,9 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
 	"image/png"
 	"math"
 	"os"
@@ -30,21 +35,26 @@ import (
 
 var looks = []string{"cards", "compact", "lanes"}
 
+var engines = []string{"dot", "sugiyama", "layered"}
+
 type model struct {
-	maps        []*Map
-	mi          int
-	look        int
-	useDot      bool
-	tb          bool
-	sel         int
-	cols, rows  int
-	cellW       int
-	cellH       int
-	lay         *Layout
-	scale       float64
-	note        string
-	gen         int
-	drawTook    time.Duration
+	maps       []*Map
+	mi         int
+	look       int
+	engine     int
+	versus     bool
+	lay2       *Layout // sugiyama, for versus
+	layTook    time.Duration
+	tb         bool
+	sel        int
+	cols, rows int
+	cellW      int
+	cellH      int
+	lay        *Layout
+	scale      float64
+	note       string
+	gen        int
+	drawTook   time.Duration
 }
 
 type drawMsg int
@@ -59,20 +69,16 @@ func (m *model) relayout() {
 	mp := m.cur()
 	look := looks[m.look]
 	m.note = ""
-	switch {
-	case look == "lanes":
-		m.lay = lanesLayout(mp)
-		m.note = "lanes always use the layered x-axis"
-	case m.useDot:
-		lay, err := dotLayout(mp, look, m.tb)
-		if err != nil {
-			m.note = err.Error() + ", fell back to layered"
-			lay = layeredLayout(mp, look, m.tb)
-		}
-		m.lay = lay
-	default:
-		m.lay = layeredLayout(mp, look, m.tb)
+	t0 := time.Now()
+	if m.versus && look != "lanes" {
+		m.lay, m.note = layoutWith(mp, look, "dot", m.tb)
+		t0 = time.Now()
+		m.lay2, _ = layoutWith(mp, look, "sugiyama", m.tb)
+	} else {
+		m.lay, m.note = layoutWith(mp, look, engines[m.engine], m.tb)
+		m.lay2 = nil
 	}
+	m.layTook = time.Since(t0)
 	if _, ok := mp.Tickets[m.sel]; !ok {
 		m.sel = mp.Order[0]
 		for _, n := range mp.Order {
@@ -84,12 +90,46 @@ func (m *model) relayout() {
 	}
 }
 
+func layoutWith(mp *Map, look, engine string, tb bool) (*Layout, string) {
+	switch {
+	case look == "lanes":
+		return lanesLayout(mp), "lanes always use the layered x-axis"
+	case engine == "dot":
+		lay, err := dotLayout(mp, look, tb)
+		if err != nil {
+			return sugiyamaLayout(mp, look, tb), err.Error() + ", fell back to sugiyama"
+		}
+		return lay, ""
+	case engine == "sugiyama":
+		return sugiyamaLayout(mp, look, tb), ""
+	}
+	return layeredLayout(mp, look, tb), ""
+}
+
+// renderView draws one layout, or dot and sugiyama side by side in versus mode.
+func renderView(mp *Map, lay, lay2 *Layout, look string, sel, W, H int, maxScale float64) (*image.RGBA, float64) {
+	if lay2 == nil {
+		return render(mp, lay, look, sel, W, H, maxScale)
+	}
+	half := (W - 8) / 2
+	a, s := render(mp, lay, look, sel, half, H, maxScale)
+	b, _ := render(mp, lay2, look, sel, half, H, maxScale)
+	img := image.NewRGBA(image.Rect(0, 0, W, H))
+	draw.Draw(img, a.Bounds(), a, image.Point{}, draw.Src)
+	draw.Draw(img, b.Bounds().Add(image.Pt(W-half, 0)), b, image.Point{}, draw.Src)
+	fill(img, roundRect(float64(half)+3, 0, 2, float64(H), 0), fadedCol)
+	fs := float64(H) / 40
+	text(img, 8, fs+6, "dot (Graphviz)", fs, true, fadedCol)
+	text(img, float64(W-half)+8, fs+6, "sugiyama (ours)", fs, true, fadedCol)
+	return img, s
+}
+
 func (m *model) maxScale() float64 { return float64(m.cellH) / 18 * 1.25 }
 
 func (m *model) kitty() string {
 	W, H := m.cols*m.cellW, m.graphRows()*m.cellH
 	t0 := time.Now()
-	img, s := render(m.cur(), m.lay, looks[m.look], m.sel, W, H, m.maxScale())
+	img, s := renderView(m.cur(), m.lay, m.lay2, looks[m.look], m.sel, W, H, m.maxScale())
 	m.scale = s / (float64(m.cellH) / 18)
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
@@ -98,7 +138,7 @@ func (m *model) kitty() string {
 	data := base64.StdEncoding.EncodeToString(buf.Bytes())
 	var b strings.Builder
 	b.WriteString("\x1b_Ga=d,d=A,q=2\x1b\\") // delete previous placements
-	b.WriteString("\x1b7\x1b[1;1H")         // save cursor, go home
+	b.WriteString("\x1b7\x1b[1;1H")          // save cursor, go home
 	for i := 0; i < len(data); i += 4096 {
 		end, more := min(i+4096, len(data)), 1
 		if end == len(data) {
@@ -143,7 +183,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "[":
 			m.look = (m.look + len(looks) - 1) % len(looks)
 		case "l":
-			m.useDot = !m.useDot
+			m.engine = (m.engine + 1) % len(engines)
+			m.versus = false
+		case "v":
+			m.versus = !m.versus
 		case "d":
 			m.tb = !m.tb
 		case "m":
@@ -246,16 +289,19 @@ func (m model) View() tea.View {
 		bl = append(bl, mp.Tickets[n].Title)
 	}
 	fmt.Fprintf(&b, "blocks:     %s\n", trunc(orNone(bl), m.cols-13))
-	eng := "layered"
-	if m.useDot && looks[m.look] != "lanes" {
-		eng = "dot"
+	eng := engines[m.engine]
+	switch {
+	case looks[m.look] == "lanes":
+		eng = "layered"
+	case m.versus:
+		eng = "dot|sugiyama"
 	}
 	dir := "LR"
 	if m.tb {
 		dir = "TB"
 	}
-	status := fmt.Sprintf(" PROTOTYPE  look %s [ ]  layout %s (l)  dir %s (d)  map #%d (m)  scale %.0f%%  draw %dms  cell %dx%d  · ←↑↓→/tab o q",
-		looks[m.look], eng, dir, mp.Num, m.scale*100, m.drawTook.Milliseconds(), m.cellW, m.cellH)
+	status := fmt.Sprintf(" PROTOTYPE  look %s [ ]  layout %s (l, v)  %dµs  dir %s (d)  map #%d (m)  scale %.0f%%  draw %dms  cell %dx%d  · ←↑↓→/tab o q",
+		looks[m.look], eng, m.layTook.Microseconds(), dir, mp.Num, m.scale*100, m.drawTook.Milliseconds(), m.cellW, m.cellH)
 	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", trunc(status, m.cols))
 	if m.note != "" {
 		fmt.Fprintf(&b, "\n\x1b[2m%s\x1b[0m", trunc(m.note, m.cols))
@@ -295,7 +341,9 @@ func cellSize(cols, rows int) (int, int) {
 func main() {
 	pngOut := flag.String("png", "", "write one PNG and exit")
 	look := flag.String("look", "cards", "cards|compact|lanes")
-	layout := flag.String("layout", "dot", "dot|layered")
+	layout := flag.String("layout", "dot", "dot|sugiyama|layered")
+	bench := flag.Int("bench", 0, "time dot and sugiyama on a random map of this many tickets and exit")
+	compare := flag.String("compare", "", "write dot-vs-sugiyama PNGs for every fixture into this dir and exit")
 	tb := flag.Bool("tb", false, "top-to-bottom")
 	mapNum := flag.Int("map", 214, "fixture map number")
 	cols := flag.Int("cols", 160, "png: columns")
@@ -303,11 +351,20 @@ func main() {
 	sel := flag.Int("sel", 0, "png: selected ticket")
 	flag.Parse()
 
+	if *bench > 0 {
+		benchLayouts(*bench)
+		return
+	}
 	files, _ := filepath.Glob("../../fixtures/map-*.json")
 	if len(files) == 0 {
 		files, _ = filepath.Glob("fixtures/map-*.json")
 	}
-	m := model{useDot: *layout == "dot", tb: *tb, sel: *sel}
+	m := model{tb: *tb, sel: *sel}
+	for i, e := range engines {
+		if e == *layout {
+			m.engine = i
+		}
+	}
 	for _, f := range files {
 		mp, err := loadMap(f, "banked/ask-barry", true)
 		if err != nil {
@@ -319,6 +376,12 @@ func main() {
 		}
 		m.maps = append(m.maps, mp)
 	}
+	syn := synthMap(40, 7) // bigger than any fixture; "m" cycles to it
+	syn.Num = 40
+	m.maps = append(m.maps, syn)
+	if *mapNum == 40 {
+		m.mi = len(m.maps) - 1
+	}
 	for i, l := range looks {
 		if l == *look {
 			m.look = i
@@ -326,6 +389,34 @@ func main() {
 	}
 	m.relayout()
 
+	if *compare != "" {
+		os.MkdirAll(*compare, 0o755)
+		m.cols, m.rows, m.cellW, m.cellH = *cols, *rows, 18, 38
+		m.versus = true
+		for mi := range m.maps {
+			m.mi = mi
+			for _, lk := range []int{0, 1} {
+				for _, tb := range []bool{false, true} {
+					m.look, m.tb, m.sel = lk, tb, 0
+					m.relayout()
+					img, _ := renderView(m.cur(), m.lay, m.lay2, looks[lk], m.sel, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
+					dir := "lr"
+					if tb {
+						dir = "tb"
+					}
+					out := filepath.Join(*compare, fmt.Sprintf("map-%d-%s-%s.png", m.cur().Num, looks[lk], dir))
+					bg := image.NewRGBA(img.Bounds()) // dark terminal-ish background so it reads in an image viewer
+					draw.Draw(bg, bg.Bounds(), image.NewUniform(color.RGBA{30, 30, 36, 255}), image.Point{}, draw.Src)
+					draw.Draw(bg, bg.Bounds(), img, image.Point{}, draw.Over)
+					f, _ := os.Create(out)
+					png.Encode(f, bg)
+					f.Close()
+					fmt.Println(out, m.note)
+				}
+			}
+		}
+		return
+	}
 	if *pngOut != "" {
 		m.cols, m.rows, m.cellW, m.cellH = *cols, *rows, 18, 38
 		img, s := render(m.cur(), m.lay, looks[m.look], m.sel, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
