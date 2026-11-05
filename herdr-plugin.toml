@@ -1,0 +1,20 @@
+id = "distrail-io.wayfinder-map"
+name = "Wayfinder map"
+version = "0.0.0"
+min_herdr_version = "0.9.1"
+description = "Show a Wayfinder map from GitHub Issues as a graph, read-only through gh"
+platforms = ["macos", "linux"]
+
+# Runs <checkout>/bin/wayfinder-map, installed by install.sh. With no MAP it
+# finds the repo from the Herdr context and opens its newest open map.
+[[panes]]
+id = "map"
+title = "Wayfinder"
+placement = "split"
+command = ["bin/wayfinder-map"]
+
+[[actions]]
+id = "open"
+title = "Open Wayfinder map"
+contexts = ["workspace"]
+command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin distrail-io.wayfinder-map --entrypoint map --placement split --direction right --no-focus"]
