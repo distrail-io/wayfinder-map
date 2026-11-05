@@ -1,6 +1,7 @@
-// Package tui is the Bubble Tea app: it loads one map and shows it as a
-// Kitty-graphics image, with the selected ticket's details and a status line
-// below. It refreshes on an interval and redraws only when the map changes.
+// Package tui is the Bubble Tea app. A picker lists the repo's open maps; a
+// map is shown as a Kitty-graphics image, with the selected ticket's details
+// and a status line below. Both refresh on an interval, and the map is
+// redrawn only when it changes.
 package tui
 
 import (
@@ -30,10 +31,19 @@ import (
 
 type Config struct {
 	Source github.Source
-	Number int // 0 opens the repo's most recently updated open map
+	Number int // 0 opens the picker
 
 	// Interval is how often the map is reloaded. Zero means DefaultInterval.
 	Interval time.Duration
+
+	// Look and List are how the map is shown. Only cards are drawn so far,
+	// and List is not yet honoured.
+	Look draw.Look
+	List bool
+	// Dir is the graph's direction, unless AutoDir picks the one that fits
+	// best, which is LR for now.
+	Dir     layout.Dir
+	AutoDir bool
 
 	// CellSize reports a cell's size in pixels. Nil reads it from stdout.
 	CellSize func(cols, rows int) (w, h int)
@@ -46,8 +56,14 @@ type Config struct {
 const DefaultInterval = 30 * time.Second
 
 type Model struct {
-	cfg        Config
-	number     int
+	cfg Config
+
+	// The picker, shown while picking.
+	picking bool
+	list    *wayfinder.List // nil until the first listing arrives
+	pick    int             // the number of the map under the cursor
+
+	number     int // the map shown, or being loaded
 	shown      *wayfinder.Map
 	res        layout.Result
 	sel        int // the selected ticket's number
@@ -62,12 +78,13 @@ type Model struct {
 
 type (
 	listedMsg struct {
-		maps []wayfinder.Summary
-		err  error
+		l   wayfinder.List
+		err error
 	}
 	loadedMsg struct {
-		m   *wayfinder.Map
-		err error
+		number int
+		m      *wayfinder.Map
+		err    error
 	}
 	openedMsg struct{ err error }
 	drawMsg   int
@@ -101,7 +118,7 @@ func New(cfg Config) Model {
 	if cfg.Open == nil {
 		cfg.Open = openURL
 	}
-	return Model{cfg: cfg, number: cfg.Number, loading: true}
+	return Model{cfg: cfg, number: cfg.Number, picking: cfg.Number == 0, loading: true}
 }
 
 func stdoutCellSize(cols, rows int) (int, int) {
@@ -126,46 +143,40 @@ func openURL(url string) error {
 }
 
 func (m Model) Init() tea.Cmd {
-	if m.number == 0 {
-		return m.list
-	}
-	return m.load
+	_, cmd := m.fetch()
+	return cmd
 }
 
-func (m Model) list() tea.Msg {
+func (m Model) listMaps() tea.Msg {
 	raw, err := m.cfg.Source.ListMaps(context.Background())
 	if err != nil {
 		return listedMsg{err: err}
 	}
-	maps, err := wayfinder.ParseList(raw)
-	return listedMsg{maps, err}
+	l, err := wayfinder.ParseList(raw)
+	return listedMsg{l, err}
 }
 
 func (m Model) load() tea.Msg {
 	raw, err := m.cfg.Source.LoadMap(context.Background(), m.number)
 	if err != nil {
-		return loadedMsg{err: err}
+		return loadedMsg{number: m.number, err: err}
 	}
 	mp, err := wayfinder.Parse(raw)
-	return loadedMsg{mp, err}
+	return loadedMsg{m.number, mp, err}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case listedMsg:
-		m.loading = false
-		switch {
-		case msg.err != nil:
-			m.err = msg.err
-		case len(msg.maps) == 0:
-			m.err = fmt.Errorf("no open wayfinder:map issues in this repo")
-		default:
-			m.number, m.loading = msg.maps[0].Number, true
-			return m, m.load
+		// A listing that arrives after a map was picked is dropped.
+		if m.picking {
+			return m.listed(msg)
 		}
-		return m.schedulePoll()
 	case loadedMsg:
-		return m.loaded(msg)
+		// So is a map that arrives after going back to the picker.
+		if !m.picking && msg.number == m.number {
+			return m.loaded(msg)
+		}
 	case pollMsg:
 		if int(msg) == m.pollGen && !m.loading {
 			return m.fetch()
@@ -188,6 +199,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// listed takes a (re)loaded listing, keeping the cursor on the same map if
+// it is still open, and schedules the next poll.
+func (m Model) listed(msg listedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	m, poll := m.schedulePoll()
+	if msg.err != nil {
+		m.err = msg.err
+		return m, poll
+	}
+	m.err, m.list = nil, &msg.l
+	if m.pickIndex() < 0 {
+		m.pick = 0
+		if len(msg.l.Maps) > 0 {
+			m.pick = msg.l.Maps[0].Number
+		}
+	}
+	return m, poll
+}
+
+func (m Model) pickIndex() int {
+	if m.list == nil {
+		return -1
+	}
+	return slices.IndexFunc(m.list.Maps, func(s wayfinder.Summary) bool { return s.Number == m.pick })
+}
+
 // loaded takes a (re)loaded map. A failed refresh keeps the map on screen,
 // and an unchanged one isn't drawn again. Either way the next poll is
 // scheduled from now.
@@ -203,12 +240,19 @@ func (m Model) loaded(msg loadedMsg) (tea.Model, tea.Cmd) {
 		return m, poll
 	}
 	m.shown = msg.m
-	m.res = layout.Layered(draw.Graph(m.shown), layout.LR)
+	m.res = layout.Layered(draw.Graph(m.shown), m.dir())
 	if m.shown.Ticket(m.sel) == nil {
 		m.sel = firstSelection(m.shown)
 	}
 	m, redraw := m.redraw()
 	return m, tea.Batch(poll, redraw)
+}
+
+func (m Model) dir() layout.Dir {
+	if m.cfg.AutoDir {
+		return layout.LR
+	}
+	return m.cfg.Dir
 }
 
 // schedulePoll fetches again after the interval, superseding any poll
@@ -218,13 +262,31 @@ func (m Model) schedulePoll() (Model, tea.Cmd) {
 	return m, m.cfg.After(m.cfg.Interval, pollMsg(m.pollGen))
 }
 
-// fetch loads the map, or first finds the newest one if none is named.
+// fetch lists the maps while picking, else loads the map.
 func (m Model) fetch() (Model, tea.Cmd) {
 	m.loading = true
-	if m.number == 0 {
-		return m, m.list
+	if m.picking {
+		return m, m.listMaps
 	}
 	return m, m.load
+}
+
+// openMap leaves the picker for map n. Polls scheduled for the picker are
+// superseded.
+func (m Model) openMap(n int) (tea.Model, tea.Cmd) {
+	m.picking, m.number, m.shown, m.sel, m.err = false, n, nil, 0, nil
+	m.pollGen++
+	return m.fetch()
+}
+
+// back leaves the map for the picker, with its cursor on the map, and
+// clears the image.
+func (m Model) back() (tea.Model, tea.Cmd) {
+	m.picking, m.pick, m.number, m.shown, m.sel, m.err = true, m.number, 0, nil, 0, nil
+	m.pollGen++
+	m.gen++
+	m, fetch := m.fetch()
+	return m, tea.Batch(tea.Raw(kitty.Clear), fetch)
 }
 
 // firstSelection is the first frontier ticket, else the first ticket.
@@ -250,6 +312,12 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		return m.fetch()
 	}
+	if m.picking {
+		return m.pickerKey(k)
+	}
+	if k == "b" || k == "esc" {
+		return m.back()
+	}
 	if m.shown == nil || m.sel == 0 {
 		return m, nil
 	}
@@ -267,6 +335,23 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	}
 	m.sel = sel
 	return m.redraw()
+}
+
+func (m Model) pickerKey(k string) (tea.Model, tea.Cmd) {
+	i := m.pickIndex()
+	if i < 0 {
+		return m, nil
+	}
+	switch k {
+	case "enter":
+		return m.openMap(m.pick)
+	case "up", "k":
+		i = max(i-1, 0)
+	case "down", "j":
+		i = min(i+1, len(m.list.Maps)-1)
+	}
+	m.pick = m.list.Maps[i].Number
+	return m, nil
 }
 
 func (m Model) open(repo string, n int) tea.Cmd {
@@ -360,6 +445,9 @@ func (m Model) image() string {
 }
 
 func (m Model) View() tea.View {
+	if m.picking {
+		return m.pickerView()
+	}
 	var b strings.Builder
 	b.WriteString(strings.Repeat("\n", max(0, m.graphRows())))
 	for _, line := range append(m.details(), m.warnings()...) {
@@ -371,12 +459,65 @@ func (m Model) View() tea.View {
 	return v
 }
 
+// pickerView is a header, a row per map with the cursor's in bold, a hint
+// if there are more maps than listed, and the status line at the bottom.
+func (m Model) pickerView() tea.View {
+	var rows, foot []string
+	header := "Open maps"
+	if m.list != nil {
+		header += " in " + m.list.Repo
+		for _, s := range m.list.Maps {
+			row := fmt.Sprintf("#%d · %d/%d done · %d ready · %d claimed · %d blocked · %s",
+				s.Number, s.Done, s.Total, s.Frontier, s.Claimed, s.Blocked, s.Title)
+			if s.Number == m.pick {
+				rows = append(rows, "\x1b[1m"+truncate("› "+row, m.cols)+"\x1b[0m")
+			} else {
+				rows = append(rows, truncate("  "+row, m.cols))
+			}
+		}
+		if m.list.More {
+			foot = append(foot, "\x1b[33m"+truncate("⚠ more maps exist; open one directly with `wayfinder-map <number>`", m.cols)+"\x1b[0m")
+		}
+	}
+	// Scroll so the cursor's row is in view.
+	fit := max(0, m.rows-1-len(foot)-statusRows)
+	from := max(0, m.pickIndex()-fit+1)
+	rows = rows[from:min(len(rows), from+fit)]
+	var b strings.Builder
+	b.WriteString("\x1b[1m" + truncate(header, m.cols) + "\x1b[0m\n")
+	for _, line := range rows {
+		b.WriteString(line + "\n")
+	}
+	b.WriteString(strings.Repeat("\n", max(0, fit-len(rows))))
+	for _, line := range foot {
+		b.WriteString(line + "\n")
+	}
+	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.pickerStatus(), m.cols))
+	v := tea.NewView(b.String())
+	v.AltScreen = true
+	return v
+}
+
+func (m Model) pickerStatus() string {
+	switch {
+	case m.err != nil:
+		return "error: " + m.err.Error()
+	case m.list == nil:
+		return "finding open maps…"
+	case len(m.list.Maps) == 0:
+		return "no open wayfinder:map issues in this repo · r refresh · q quit"
+	}
+	n := fmt.Sprintf("%d open maps", len(m.list.Maps))
+	if len(m.list.Maps) == 1 {
+		n = "1 open map"
+	}
+	return n + " · ↑↓ select · enter open · r refresh · q quit"
+}
+
 func (m Model) status() string {
 	switch {
 	case m.err != nil:
 		return "error: " + m.err.Error()
-	case m.shown == nil && m.number == 0:
-		return "finding the newest open map…"
 	case m.shown == nil:
 		return fmt.Sprintf("loading map #%d…", m.number)
 	}
@@ -445,7 +586,7 @@ func (m Model) legend() string {
 			return b.String()
 		}
 	}
-	for _, s := range []string{"┄ closed blocker  ", "←↑↓→ tab select · o open · r refresh · q quit"} {
+	for _, s := range []string{"┄ closed blocker  ", "←↑↓→ tab select · o open · b back · r refresh · q quit"} {
 		if !add(s, len([]rune(s))) {
 			break
 		}

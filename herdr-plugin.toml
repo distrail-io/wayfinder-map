@@ -6,7 +6,7 @@ description = "Show a Wayfinder map from GitHub Issues as a graph, read-only thr
 platforms = ["macos", "linux"]
 
 # Runs <checkout>/bin/wayfinder-map, installed by install.sh. With no MAP it
-# finds the repo from the Herdr context and opens its newest open map.
+# finds the repo from the Herdr context and opens its picker.
 [[panes]]
 id = "map"
 title = "Wayfinder"

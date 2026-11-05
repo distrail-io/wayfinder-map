@@ -14,6 +14,11 @@ func TestParseRef(t *testing.T) {
 		{"214", github.Ref{Number: 214}},
 		{"#214", github.Ref{Number: 214}},
 		{"banked/ask-barry#214", github.Ref{Repo: "banked/ask-barry", Number: 214}},
+		{"https://github.com/banked/ask-barry/issues/214", github.Ref{Repo: "banked/ask-barry", Number: 214}},
+		{"https://github.com/banked/ask-barry/issues/214/", github.Ref{Repo: "banked/ask-barry", Number: 214}},
+		{"https://github.com/banked/ask-barry/issues/214#issuecomment-1", github.Ref{Repo: "banked/ask-barry", Number: 214}},
+		{"https://github.com/banked/ask-barry/issues/214?q=1", github.Ref{Repo: "banked/ask-barry", Number: 214}},
+		{"github.com/banked/ask-barry/issues/214", github.Ref{Repo: "banked/ask-barry", Number: 214}},
 	}
 	for _, tt := range tests {
 		got, err := github.ParseRef(tt.in)
@@ -21,7 +26,11 @@ func TestParseRef(t *testing.T) {
 			t.Errorf("ParseRef(%q) = %+v, %v; want %+v", tt.in, got, err, tt.want)
 		}
 	}
-	for _, bad := range []string{"", "#", "abc", "0", "-3", "a/b", "a#3", "/b#3", "a/#3", "a/b/c#3"} {
+	for _, bad := range []string{"", "#", "abc", "0", "-3", "a/b", "a#3", "/b#3", "a/#3", "a/b/c#3",
+		"https://github.com/banked/ask-barry/pull/214", "https://github.com/banked/ask-barry/issues/x",
+		"https://github.com/banked/ask-barry/issues/0", "https://github.com/banked/issues/214",
+		"https://example.com/banked/ask-barry/issues/214", "https://github.com/banked/ask-barry/issues/214/more",
+		"ftp://github.com/banked/ask-barry/issues/214", "https://user@github.com/banked/ask-barry/issues/214"} {
 		if _, err := github.ParseRef(bad); err == nil {
 			t.Errorf("ParseRef(%q) accepted a bad reference", bad)
 		}

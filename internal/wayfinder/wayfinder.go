@@ -305,50 +305,89 @@ func (m *Map) cycles() [][]int {
 	return out
 }
 
-// Summary is one open map in a repo.
+// List is a repo's open maps, most recently updated first.
+type List struct {
+	Repo string
+	Maps []Summary
+	More bool // the repo has more open maps than one query fetches
+}
+
+// Summary is one open map in a repo, with its tickets counted by state.
+// Total and Done count every ticket; the others only those fetched.
 type Summary struct {
 	Number int
 	Title  string
+	Total  int
+	Done   int
+
+	Frontier, Claimed, Blocked int
 }
 
-// ParseList reads the response to github.ListQuery: the repo's open maps,
-// most recently updated first.
-func ParseList(raw []byte) ([]Summary, error) {
+// ParseList reads the response to github.ListQuery.
+func ParseList(raw []byte) (List, error) {
 	var r struct {
 		gqlErrors
 		Data struct {
 			Repository *struct {
-				Issues nodes[Summary]
+				NameWithOwner string
+				Issues        struct {
+					TotalCount int
+					Nodes      []struct {
+						Number           int
+						Title            string
+						SubIssuesSummary struct{ Total, Completed int }
+						SubIssues        nodes[struct {
+							State                    string
+							Assignees                struct{ TotalCount int }
+							IssueDependenciesSummary struct{ BlockedBy int }
+						}]
+					}
+				}
 			}
 		}
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return nil, fmt.Errorf("parse map list: %w", err)
+		return List{}, fmt.Errorf("parse map list: %w", err)
 	}
 	if err := r.err(); err != nil {
-		return nil, err
+		return List{}, err
 	}
-	if r.Data.Repository == nil {
-		return nil, ErrNotFound
+	repo := r.Data.Repository
+	if repo == nil {
+		return List{}, ErrNotFound
 	}
-	maps := r.Data.Repository.Issues.Nodes
-	for i := range maps {
-		maps[i].Title = Sanitize(maps[i].Title)
+	l := List{Repo: repo.NameWithOwner, More: repo.Issues.TotalCount > len(repo.Issues.Nodes)}
+	for _, n := range repo.Issues.Nodes {
+		s := Summary{Number: n.Number, Title: Sanitize(n.Title), Total: n.SubIssuesSummary.Total, Done: n.SubIssuesSummary.Completed}
+		for _, t := range n.SubIssues.Nodes {
+			switch stateOf(t.State == "CLOSED", t.Assignees.TotalCount > 0, t.IssueDependenciesSummary.BlockedBy > 0) {
+			case Claimed:
+				s.Claimed++
+			case Blocked:
+				s.Blocked++
+			case Frontier:
+				s.Frontier++
+			}
+		}
+		l.Maps = append(l.Maps, s)
 	}
-	return maps, nil
+	return l, nil
 }
 
 func classify(t *Ticket) State {
+	openBlocker := slices.ContainsFunc(t.Blockers, func(b Blocker) bool { return !b.Closed })
+	return stateOf(t.Closed, len(t.Assignees) > 0, openBlocker)
+}
+
+// stateOf checks a ticket's state in the order the states are declared.
+func stateOf(closed, assigned, openBlocker bool) State {
 	switch {
-	case t.Closed:
+	case closed:
 		return Done
-	case len(t.Assignees) > 0:
+	case assigned:
 		return Claimed
-	}
-	for _, b := range t.Blockers {
-		if !b.Closed {
-			return Blocked
-		}
+	case openBlocker:
+		return Blocked
 	}
 	return Frontier
 }

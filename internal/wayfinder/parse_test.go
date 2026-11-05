@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -149,19 +150,47 @@ func TestSanitizeStripsEscapes(t *testing.T) {
 }
 
 func TestParseList(t *testing.T) {
-	raw := []byte(`{"data":{"repository":{"nameWithOwner":"a/b","issues":{"totalCount":2,"nodes":[
-		{"number":7,"title":"Newest \u001b[31mmap","updatedAt":"2026-11-05T10:00:00Z"},
-		{"number":3,"title":"Older map","updatedAt":"2026-11-01T10:00:00Z"}]}}}}`)
+	got, err := wayfinder.ParseList(load(t, "list-ask-barry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := wayfinder.List{Repo: "banked/ask-barry", Maps: []wayfinder.Summary{
+		{Number: 232, Title: "Wayfinder: define Sandcastle's sandbox with dev containers", Total: 3, Frontier: 2, Blocked: 1},
+		{Number: 214, Title: "Wayfinder: run Sandcastle standalone against any Banked repo", Total: 8, Done: 4, Frontier: 1, Blocked: 3},
+		{Number: 175, Title: "Bring ask-barry pipelines up to the current Banked CI/CD standard", Total: 14, Done: 2, Frontier: 9, Blocked: 3},
+		{Number: 152, Title: "Wayfinder: isolated Stacks, Journeys and PR Evidence", Total: 8, Done: 4, Frontier: 4},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseList =\n%+v\nwant\n%+v", got, want)
+	}
+	if _, err := wayfinder.ParseList([]byte(`{"data":{"repository":null}}`)); !errors.Is(err, wayfinder.ErrNotFound) {
+		t.Errorf("missing repo: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestParseListCountsClaimedAndSanitizes(t *testing.T) {
+	raw := []byte(`{"data":{"repository":{"nameWithOwner":"a/b","issues":{"totalCount":1,"nodes":[
+		{"number":7,"title":"Newest \u001b[31mmap","subIssuesSummary":{"total":4,"completed":1},"subIssues":{"nodes":[
+			{"state":"CLOSED","assignees":{"totalCount":1},"issueDependenciesSummary":{"blockedBy":0}},
+			{"state":"OPEN","assignees":{"totalCount":1},"issueDependenciesSummary":{"blockedBy":2}},
+			{"state":"OPEN","assignees":{"totalCount":0},"issueDependenciesSummary":{"blockedBy":1}},
+			{"state":"OPEN","assignees":{"totalCount":0},"issueDependenciesSummary":{"blockedBy":0}}]}}]}}}}`)
 	got, err := wayfinder.ParseList(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []wayfinder.Summary{{Number: 7, Title: "Newest map"}, {Number: 3, Title: "Older map"}}
-	if !slices.Equal(got, want) {
-		t.Errorf("ParseList = %+v, want %+v", got, want)
+	want := wayfinder.Summary{Number: 7, Title: "Newest map", Total: 4, Done: 1, Claimed: 1, Blocked: 1, Frontier: 1}
+	if len(got.Maps) != 1 || got.Maps[0] != want || got.More {
+		t.Errorf("ParseList = %+v, want one map %+v and no more", got, want)
 	}
-	if _, err := wayfinder.ParseList([]byte(`{"data":{"repository":null}}`)); !errors.Is(err, wayfinder.ErrNotFound) {
-		t.Errorf("missing repo: err = %v, want ErrNotFound", err)
+}
+
+func TestParseListFlagsMoreMapsThanFetched(t *testing.T) {
+	raw := []byte(`{"data":{"repository":{"nameWithOwner":"a/b","issues":{"totalCount":51,"nodes":[
+		{"number":7,"title":"One of 51","subIssuesSummary":{"total":0,"completed":0},"subIssues":{"nodes":[]}}]}}}}`)
+	got, err := wayfinder.ParseList(raw)
+	if err != nil || !got.More {
+		t.Errorf("ParseList = %+v, %v; want More", got, err)
 	}
 }
 
