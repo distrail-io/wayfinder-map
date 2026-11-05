@@ -17,7 +17,7 @@ The repo comes from the first of these that is set: the `owner/repo` in MAP, `-R
 ./install.sh v0.1.0     # a given release
 ```
 
-`install.sh` downloads the binary for your platform with `gh`, checks its SHA-256 and its GitHub build attestation, and writes it to `bin/wayfinder-map` in this checkout. It writes nothing else. It prints the `ln -s` command to put the binary on your PATH.
+`install.sh` downloads the binary for your platform with `gh`, checks its SHA-256 against the release's `SHA256SUMS`, and writes it to `bin/wayfinder-map` in this checkout. It writes nothing else. It prints the `ln -s` command to put the binary on your PATH.
 
 To build from source instead: `go build -o bin/wayfinder-map ./cmd/wayfinder-map`.
 
@@ -43,7 +43,7 @@ command = "distrail-io.wayfinder-map.open"
 - **Dependencies** are vendored, checked with `govulncheck` in CI, and kept current by Dependabot:
   - Bubble Tea v2 (MIT): the terminal app.
   - `golang.org/x/image`, `x/sys` and `x/text` (BSD-3-Clause, Go team): drawing, fonts and terminal size.
-- **Releases** are built by `release.yml` from a release-please tag, with `CGO_ENABLED=0 -trimpath`, and carry `SHA256SUMS` and a build provenance attestation.
+- **Releases** are built by `release.yml` from a release-please tag, with `CGO_ENABLED=0 -trimpath`, and carry `SHA256SUMS`. These catch a corrupted download but not a tampered release; build provenance attestations are paused until [#14](https://github.com/distrail-io/wayfinder-map/issues/14).
 
 ## Development
 
