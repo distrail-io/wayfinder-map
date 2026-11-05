@@ -139,10 +139,10 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 const usage = `usage: wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list]
 
 MAP is 123, #123, owner/repo#123 or an issue URL; without it, a picker lists
-the repo's open maps. Without --list, the tickets are listed if the terminal
-doesn't answer that it shows Kitty graphics; --list=false draws regardless. WAYFINDER_MAP_LOOK, WAYFINDER_MAP_DIR,
-WAYFINDER_MAP_INTERVAL and WAYFINDER_MAP_LIST=1 set the flags of those names;
-a flag beats its variable.
+the repo's open maps. WAYFINDER_MAP_LOOK, WAYFINDER_MAP_DIR,
+WAYFINDER_MAP_INTERVAL and WAYFINDER_MAP_LIST (1 or 0) set the flags of those
+names; a flag beats its variable. Unless --list is set either way, the
+tickets are listed if the terminal doesn't say it shows Kitty graphics.
 `
 
 type lookValue draw.Look

@@ -745,3 +745,14 @@ func TestListNeverWritesKittyEscapes(t *testing.T) {
 		t.Error("q didn't quit")
 	}
 }
+
+// A pane too short for the graph clears the image rather than leaving the
+// old one over the details.
+func TestAPaneTooShortForTheGraphClearsIt(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
+	a := start(t, src, 214).sized()
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 6})
+	if raw := a.wait(time.Second); len(raw) != 1 || raw[0] != "\x1b_Ga=d,d=A,q=2\x1b\\" {
+		t.Errorf("want the image cleared, got %q", raw)
+	}
+}

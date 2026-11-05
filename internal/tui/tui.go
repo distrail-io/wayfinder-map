@@ -194,9 +194,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cellW, m.cellH = m.cfg.CellSize(m.cols, m.rows)
 		return m.fit().redraw()
 	case drawMsg:
-		if int(msg) == m.gen && !m.cfg.List && m.shown != nil && m.cols > 0 && m.graphRows() > 0 {
-			return m, tea.Raw(m.image())
+		if int(msg) != m.gen || m.cfg.List || m.shown == nil {
+			break
 		}
+		if m.cols <= 0 || m.graphRows() <= 0 {
+			// No room for the graph: don't leave the old image over the text.
+			return m, tea.Raw(kitty.Clear)
+		}
+		return m, tea.Raw(m.image())
 	case tea.KeyPressMsg:
 		return m.key(msg.String())
 	}
@@ -364,10 +369,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	sel := m.sel
 	switch k {
 	case "c":
-		m.look = 1 - m.look
+		m.look = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}[m.look]
 		return m.relayout().redraw()
 	case "d":
-		m.dir, m.autoDir = 1-m.dir, false
+		m.dir, m.autoDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[m.dir], false
 		return m.redraw()
 	case "tab", "shift+tab":
 		sel = m.cycle(k == "tab")
@@ -543,29 +548,24 @@ func (m Model) View() tea.View {
 // listRows fills the graph area with the tickets grouped by state, a
 // heading over each group, scrolled so the selection is in view.
 func (m Model) listRows() []string {
+	count := map[wayfinder.State]int{}
+	for _, t := range m.shown.Tickets {
+		count[t.State]++
+	}
 	var rows []string
 	at := 0
-	for _, s := range listStates {
-		var group []*wayfinder.Ticket
-		for _, t := range m.shown.Tickets {
-			if t.State == s {
-				group = append(group, t)
-			}
+	ts := listOrder(m.shown)
+	for i, t := range ts {
+		if i == 0 || t.State != ts[i-1].State {
+			heading := truncate(fmt.Sprintf("%s (%d)", t.State, count[t.State]), m.cols-3)
+			rows = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m")
 		}
-		if len(group) == 0 {
-			continue
-		}
-		c := draw.FillOf(s)
-		rows = append(rows, fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m \x1b[1m%s\x1b[0m",
-			c.R, c.G, c.B, truncate(fmt.Sprintf("%s (%d)", s, len(group)), m.cols-3)))
-		for _, t := range group {
-			row := fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title)
-			if t.Number == m.sel {
-				at = len(rows)
-				rows = append(rows, "\x1b[1m"+truncate("› "+row, m.cols)+"\x1b[0m")
-			} else {
-				rows = append(rows, truncate("  "+row, m.cols))
-			}
+		row := fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title)
+		if t.Number == m.sel {
+			at = len(rows)
+			rows = append(rows, "\x1b[1m"+truncate("› "+row, m.cols)+"\x1b[0m")
+		} else {
+			rows = append(rows, truncate("  "+row, m.cols))
 		}
 	}
 	fit := max(0, m.graphRows())
@@ -695,9 +695,8 @@ func (m Model) legend() string {
 		return true
 	}
 	for _, s := range []wayfinder.State{wayfinder.Done, wayfinder.Claimed, wayfinder.Frontier, wayfinder.Blocked} {
-		c := draw.FillOf(s)
 		name := s.String()
-		if !add(fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m %s  ", c.R, c.G, c.B, name), 2+1+len([]rune(name))+2) {
+		if !add(swatch(s)+" "+name+"  ", 2+1+len([]rune(name))+2) {
 			return b.String()
 		}
 	}
@@ -711,6 +710,12 @@ func (m Model) legend() string {
 		}
 	}
 	return b.String()
+}
+
+// swatch is two cells in the state's colour.
+func swatch(s wayfinder.State) string {
+	c := draw.FillOf(s)
+	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B)
 }
 
 func orNone(xs []string) string {
