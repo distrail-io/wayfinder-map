@@ -73,13 +73,35 @@ func Graph(m *wayfinder.Map, look Look) layout.Graph {
 	return g
 }
 
+// Transform takes layout units to pixels in the image Render draws: scaled
+// by S, then offset by OX, OY to centre the drawing. Click hit-testing uses
+// it too, so it finds tickets where they are drawn.
+type Transform struct{ S, OX, OY float64 }
+
+// Fit is the transform that centres res in a W×H image, scaled to fit but
+// never above maxScale.
+func Fit(res layout.Result, W, H int, maxScale float64) Transform {
+	s := res.Scale(float64(W), float64(H), maxScale)
+	return Transform{s, (float64(W) - res.W*s) / 2, (float64(H) - res.H*s) / 2}
+}
+
+// Point is p in pixels.
+func (t Transform) Point(p layout.Point) layout.Point {
+	return layout.Point{X: t.OX + p.X*t.S, Y: t.OY + p.Y*t.S}
+}
+
+// Rect is r in pixels.
+func (t Transform) Rect(r layout.Rect) layout.Rect {
+	p := t.Point(layout.Point{X: r.X, Y: r.Y})
+	return layout.Rect{X: p.X, Y: p.Y, W: r.W * t.S, H: r.H * t.S}
+}
+
 // Render draws the layout of Graph(m, look) centred in a W×H image, scaled
 // to fit but never above maxScale. Ticket sel, if any, gets a ring.
 func Render(m *wayfinder.Map, res layout.Result, look Look, sel int, W, H int, maxScale float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
-	s := res.Scale(float64(W), float64(H), maxScale)
-	ox, oy := (float64(W)-res.W*s)/2, (float64(H)-res.H*s)/2
-	pt := func(p layout.Point) layout.Point { return layout.Point{X: ox + p.X*s, Y: oy + p.Y*s} }
+	tr := Fit(res, W, H, maxScale)
+	s, pt := tr.S, tr.Point
 
 	for i, c := range res.Curves {
 		if len(c.Pts) == 0 {
@@ -98,12 +120,11 @@ func Render(m *wayfinder.Map, res layout.Result, look Look, sel int, W, H int, m
 		arrowhead(img, line[len(line)-1], line[max(0, len(line)-3)], 9*s, col)
 	}
 	for _, t := range m.Tickets {
-		b := res.Boxes[t.Number]
-		p := pt(layout.Point{X: b.X, Y: b.Y})
+		b := tr.Rect(res.Boxes[t.Number])
 		if look == Compact {
-			circle(img, t, p.X+b.W*s/2, p.Y+b.H*s/2, b.W*s/2, s, t.Number == sel)
+			circle(img, t, b.X+b.W/2, b.Y+b.H/2, b.W/2, s, t.Number == sel)
 		} else {
-			card(img, t, p.X, p.Y, b.W*s, b.H*s, s, t.Number == sel)
+			card(img, t, b.X, b.Y, b.W, b.H, s, t.Number == sel)
 		}
 	}
 	return img
