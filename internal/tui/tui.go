@@ -565,7 +565,7 @@ func (m Model) warnings() []string {
 }
 
 func (m Model) image() string {
-	img := draw.Render(m.shown, m.res(), m.look, m.sel, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
+	img := draw.Render(m.shown, m.res(), m.look, m.sel, 0, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := enc.Encode(&buf, img); err != nil {

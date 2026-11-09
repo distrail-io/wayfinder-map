@@ -97,8 +97,9 @@ func (t Transform) Rect(r layout.Rect) layout.Rect {
 }
 
 // Render draws the layout of Graph(m, look) centred in a W×H image, scaled
-// to fit but never above maxScale. Ticket sel, if any, gets a ring.
-func Render(m *wayfinder.Map, res layout.Result, look Look, sel int, W, H int, maxScale float64) *image.RGBA {
+// to fit but never above maxScale. Ticket sel, if any, gets a ring, and
+// ticket focus, if any, a double border.
+func Render(m *wayfinder.Map, res layout.Result, look Look, sel, focus int, W, H int, maxScale float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
 	tr := Fit(res, W, H, maxScale)
 	s, pt := tr.S, tr.Point
@@ -122,9 +123,9 @@ func Render(m *wayfinder.Map, res layout.Result, look Look, sel int, W, H int, m
 	for _, t := range m.Tickets {
 		b := tr.Rect(res.Boxes[t.Number])
 		if look == Compact {
-			circle(img, t, b.X+b.W/2, b.Y+b.H/2, b.W/2, s, t.Number == sel)
+			circle(img, t, b.X+b.W/2, b.Y+b.H/2, b.W/2, s, t.Number == sel, t.Number == focus)
 		} else {
-			card(img, t, b.X, b.Y, b.W, b.H, s, t.Number == sel)
+			card(img, t, b.X, b.Y, b.W, b.H, s, t.Number == sel, t.Number == focus)
 		}
 	}
 	return img
@@ -132,12 +133,20 @@ func Render(m *wayfinder.Map, res layout.Result, look Look, sel int, W, H int, m
 
 // circle draws a ticket as a disc of radius r filled by state, with its
 // type icon above its number.
-func circle(img *image.RGBA, t *wayfinder.Ticket, cx, cy, r, s float64, selected bool) {
-	if selected {
+func circle(img *image.RGBA, t *wayfinder.Ticket, cx, cy, r, s float64, selected, focus bool) {
+	band := func(from, to float64, col color.Color) {
 		p := &path{}
-		discTo(p, cx, cy, r+4*s)
-		discBackTo(p, cx, cy, r+s)
-		fill(img, p, ringCol)
+		discTo(p, cx, cy, r+to*s)
+		discBackTo(p, cx, cy, r+from*s)
+		fill(img, p, col)
+	}
+	if focus {
+		for _, b := range focusBands {
+			band(b[0], b[1], fillOf[t.State])
+		}
+	}
+	if selected {
+		band(1, 4, ringCol)
 	}
 	p := &path{}
 	discTo(p, cx, cy, r)
@@ -155,10 +164,15 @@ func circle(img *image.RGBA, t *wayfinder.Ticket, cx, cy, r, s float64, selected
 
 // card draws a ticket as a rounded box filled by state, with its type icon,
 // number and title wrapped to two lines.
-func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected bool) {
+func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected, focus bool) {
 	r := 8 * s
+	if focus {
+		for _, b := range focusBands {
+			band(img, x, y, w, h, r, b[0]*s, b[1]*s, fillOf[t.State])
+		}
+	}
 	if selected {
-		ring(img, x, y, w, h, r, s)
+		band(img, x, y, w, h, r, 1*s, 4*s, ringCol)
 	}
 	fill(img, roundRect(x, y, w, h, r), fillOf[t.State])
 	tc := textOn
@@ -176,18 +190,22 @@ func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected 
 	}
 }
 
-// ring draws a band around a card, punching out its middle by winding the
-// inner path the other way.
-func ring(img *image.RGBA, x, y, w, h, r, s float64) {
-	o, band := 4*s, 3*s
+// focusBands are the focus ticket's double border: two bands in its own
+// colour, as offsets from its edge in layout units. The selection's ring
+// lies over the first.
+var focusBands = [][2]float64{{1, 3}, {5, 7}}
+
+// band draws a band around a card, from offset in to out beyond its edge,
+// punching out its middle by winding the inner path the other way.
+func band(img *image.RGBA, x, y, w, h, r, in, out float64, col color.Color) {
+	o := out
 	p := roundRect(x-o, y-o, w+2*o, h+2*o, r+o)
-	in := o - band
 	p.moveTo(x-in, y-in)
 	p.lineTo(x-in, y+h+in)
 	p.lineTo(x+w+in, y+h+in)
 	p.lineTo(x+w+in, y-in)
 	p.close()
-	fill(img, p, ringCol)
+	fill(img, p, col)
 }
 
 // ---- paths, filled with the vector rasteriser over their bounding box ----
