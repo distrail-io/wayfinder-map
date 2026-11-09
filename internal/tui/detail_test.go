@@ -402,3 +402,54 @@ func TestTheDetailViewIsSanitised(t *testing.T) {
 		}
 	}
 }
+
+// offMap is map #1 in a/b with one ticket, #7, assigned to who, if anyone,
+// and blocked only by #9 in repo, which isn't on the map.
+func offMap(repo, who string) []byte {
+	r, _ := json.Marshal(repo)
+	assignees := ""
+	if who != "" {
+		w, _ := json.Marshal(who)
+		assignees = fmt.Sprintf(`{"login":%s}`, w)
+	}
+	return fmt.Appendf(nil, `{"data":{"repository":{"nameWithOwner":"a/b","issue":{"number":1,"title":"Map","state":"OPEN",
+		"subIssuesSummary":{"total":1},"subIssues":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":7,"title":"Seven",
+		"state":"OPEN","labels":{"nodes":[{"name":"wayfinder:task"}]},"assignees":{"nodes":[%s]},
+		"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"OPEN","repository":{"nameWithOwner":%s}}]}}]}}}}}`,
+		assignees, r)
+}
+
+// Repo names and logins come from GitHub too, so they are sanitised like
+// titles: from the map before the issue loads, and from the issue after.
+func TestRepoNamesAndLoginsAreSanitised(t *testing.T) {
+	const evil, who = "oth\x1b]0;x\x07er/repo", "oct\x1b[2Jocat"
+	src := &fakeSource{maps: map[int][]byte{1: offMap(evil, who)}, issues: map[string][]byte{}}
+	a := start(t, src, 1).sized()
+	var load tea.Cmd
+	a.m, load = a.m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	check := func(when string, want ...string) {
+		t.Helper()
+		v := a.view()
+		for _, bad := range []string{"\x1b]0;", "\x1b[2J"} {
+			if strings.Contains(v, bad) {
+				t.Errorf("%s, the view holds %q:\n%q", when, bad, v)
+			}
+		}
+		for _, w := range want {
+			if !a.has(w) {
+				t.Errorf("%s, the view lacks %q:\n%s", when, w, v)
+			}
+		}
+	}
+	check("before the issue loads", "assigned to octocat", "other/repo#9")
+	r, _ := json.Marshal(evil)
+	w, _ := json.Marshal(who)
+	related := fmt.Sprintf(`{"number":9,"title":"Nine","state":"OPEN","repository":{"nameWithOwner":%s}}`, r)
+	src.issues["a/b#7"] = fmt.Appendf(nil, `{"data":{"repository":{"nameWithOwner":%s,"issue":{"number":7,"title":"Seven","state":"OPEN",
+		"body":"","labels":{"nodes":[]},"assignees":{"nodes":[{"login":%s}]},"parent":%s,"subIssuesSummary":{"total":1,"completed":0},
+		"subIssues":{"nodes":[%s]},"blockedBy":{"nodes":[%s]},"blocking":{"nodes":[%s]}}}}}`, r, w, related, related, related, related)
+	for _, msg := range run(load) {
+		a.send(msg)
+	}
+	check("once the issue loads", "assigned to octocat", "in other/repo#9 Nine", "other/repo#9 Nine · open")
+}

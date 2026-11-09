@@ -200,7 +200,7 @@ func Parse(raw []byte) (*Map, error) {
 		return nil, ErrNotFound
 	}
 	is := repo.Issue
-	m := &Map{Repo: repo.NameWithOwner, Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED"}
+	m := &Map{Repo: Sanitize(repo.NameWithOwner), Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED"}
 	var moreBlockers []int
 	for _, n := range is.SubIssues.Nodes {
 		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Closed: n.State == "CLOSED"}
@@ -210,10 +210,10 @@ func Parse(raw []byte) (*Map, error) {
 		}
 		t.Type = typeOf(labels)
 		for _, a := range n.Assignees.Nodes {
-			t.Assignees = append(t.Assignees, a.Login)
+			t.Assignees = append(t.Assignees, Sanitize(a.Login))
 		}
 		for _, b := range n.BlockedBy.Nodes {
-			t.Blockers = append(t.Blockers, Blocker{b.Repository.NameWithOwner, b.Number, b.State == "CLOSED"})
+			t.Blockers = append(t.Blockers, Blocker{Sanitize(b.Repository.NameWithOwner), b.Number, b.State == "CLOSED"})
 		}
 		if n.BlockedBy.PageInfo.HasNextPage {
 			moreBlockers = append(moreBlockers, n.Number)
@@ -379,7 +379,7 @@ func ParseList(raw []byte) (List, error) {
 	if repo == nil {
 		return List{}, ErrNotFound
 	}
-	l := List{Repo: repo.NameWithOwner, More: repo.Issues.TotalCount > len(repo.Issues.Nodes)}
+	l := List{Repo: Sanitize(repo.NameWithOwner), More: repo.Issues.TotalCount > len(repo.Issues.Nodes)}
 	for _, n := range repo.Issues.Nodes {
 		s := Summary{Number: n.Number, Title: Sanitize(n.Title), Total: n.SubIssuesSummary.Total, Done: n.SubIssuesSummary.Completed}
 		for _, t := range n.SubIssues.Nodes {
@@ -430,10 +430,11 @@ func stateOf(closed, assigned, openBlocker bool) State {
 	return Frontier
 }
 
-// Sanitize makes an untrusted issue title safe to show: it removes escape
-// sequences whole, then drops controls, format characters (bidi overrides,
-// zero-width and invisible tag characters), line and paragraph separators,
-// and invalid UTF-8.
+// Sanitize makes an untrusted string from GitHub, such as a title, a repo
+// name or a login, safe to show: it removes escape sequences whole, then
+// drops controls, format characters (bidi overrides, zero-width and
+// invisible tag characters), line and paragraph separators, and invalid
+// UTF-8.
 func Sanitize(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {

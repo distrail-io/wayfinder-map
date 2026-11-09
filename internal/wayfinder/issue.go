@@ -65,7 +65,7 @@ type rawRelated struct {
 }
 
 func (r rawRelated) related() Related {
-	return Related{Repo: r.Repository.NameWithOwner, Number: r.Number, Title: Sanitize(r.Title), Closed: r.State == "CLOSED"}
+	return Related{Repo: Sanitize(r.Repository.NameWithOwner), Number: r.Number, Title: Sanitize(r.Title), Closed: r.State == "CLOSED"}
 }
 
 func relatedOf(rs []rawRelated) []Related {
@@ -112,7 +112,7 @@ func ParseIssue(raw []byte) (*Issue, error) {
 	}
 	is := repo.Issue
 	out := &Issue{
-		Repo: repo.NameWithOwner, Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED",
+		Repo: Sanitize(repo.NameWithOwner), Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED",
 		Body: is.Body, BodyHTML: is.BodyHTML, SubTotal: is.SubIssuesSummary.Total, SubDone: is.SubIssuesSummary.Completed,
 		SubIssues: relatedOf(is.SubIssues.Nodes), BlockedBy: relatedOf(is.BlockedBy.Nodes), Blocking: relatedOf(is.Blocking.Nodes),
 	}
