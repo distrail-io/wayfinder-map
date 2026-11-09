@@ -52,7 +52,7 @@ To build from source instead: `go build -o bin/wayfinder-map ./cmd/wayfinder-map
 herdr plugin link /path/to/this/checkout
 ```
 
-The "Open Wayfinder map" action opens a right split with the picker for the focused pane's repo. To bind it to a key, add this to your Herdr config:
+The "Open Wayfinder map" action opens a right split with the picker for the focused pane's repo, and focuses it so your next key goes to the picker. To bind it to a key, add this to your Herdr config:
 
 ```toml
 [[keys.command]]
