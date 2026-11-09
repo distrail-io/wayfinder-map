@@ -20,8 +20,8 @@ func TestParseIssue(t *testing.T) {
 		BodyHTML: `<p dir="auto">Swap the vendored copy for the standalone one.</p>`,
 		Parent:   &wayfinder.Related{Repo: "banked/ask-barry", Number: 214, Title: "Wayfinder: run Sandcastle standalone against any Banked repo"},
 		SubIssues: []wayfinder.Related{
-			{Repo: "banked/ask-barry", Number: 301, Title: "Remove the vendored copy", Closed: true},
-			{Repo: "banked/ask-barry", Number: 302, Title: "Point CI at the standalone image"},
+			{Repo: "banked/ask-barry", Number: 301, Title: "Remove the vendored copy", Closed: true, Type: wayfinder.NoType},
+			{Repo: "banked/ask-barry", Number: 302, Title: "Point CI at the standalone image", Type: wayfinder.NoType},
 		},
 		SubTotal: 2, SubDone: 1,
 		BlockedBy: []wayfinder.Related{
@@ -44,6 +44,8 @@ func TestParseIssueSanitizes(t *testing.T) {
 	raw := []byte(`{"data":{"repository":{"nameWithOwner":"a/b","issue":{"number":1,"title":"x\u001b[2Jy","state":"OPEN",
 		"body":"b\u001b[31m","labels":{"nodes":[{"name":"l‮abel"}]},"assignees":{"nodes":[{"login":"oc\u0007to"}]},
 		"parent":{"number":2,"title":"p\u001b]0;t\u0007q","repository":{"nameWithOwner":"a/b"}},
+		"subIssues":{"nodes":[{"number":4,"title":"s","state":"OPEN","repository":{"nameWithOwner":"a/\u001b[5mc"},
+			"assignees":{"nodes":[{"login":"hu\u001b[2Jbot"}]},"labels":{"nodes":[]}}]},
 		"blockedBy":{"nodes":[{"number":3,"title":"\u009b2Jz","state":"OPEN","repository":{"nameWithOwner":"a/b"}}]}}}}}`)
 	is, err := wayfinder.ParseIssue(raw)
 	if err != nil {
@@ -51,6 +53,9 @@ func TestParseIssueSanitizes(t *testing.T) {
 	}
 	if is.Title != "xy" || is.Labels[0] != "label" || is.Assignees[0] != "octo" || is.Parent.Title != "pq" || is.BlockedBy[0].Title != "z" {
 		t.Errorf("unsanitised: %+v", is)
+	}
+	if s := is.SubIssues[0]; s.Repo != "a/c" || s.Assignees[0] != "hubot" {
+		t.Errorf("unsanitised sub-issue: %+v", s)
 	}
 	if is.Body != "b\x1b[31m" {
 		t.Errorf("the raw body changed: %q", is.Body)

@@ -403,6 +403,22 @@ func TestTheDetailViewIsSanitised(t *testing.T) {
 	}
 }
 
+// A sub-issue off the map shows whether it is claimed, and its type, as
+// the issue's query brings its assignees and labels.
+func TestSubIssuesOffTheMapShowClaimedAndTheirType(t *testing.T) {
+	a, src := ask(t, "map-edge-cases.json", tui.Config{})
+	src.issues["banked/ask-barry#222"] = []byte(strings.Replace(string(fixture(t, "issue-222.json")),
+		`"title":"Point CI at the standalone image","state":"OPEN","repository":{"nameWithOwner":"banked/ask-barry"},"assignees":{"nodes":[]},"labels":{"nodes":[]}`,
+		`"title":"Point CI at the standalone image","state":"OPEN","repository":{"nameWithOwner":"banked/ask-barry"},"assignees":{"nodes":[{"login":"hubot"}]},"labels":{"nodes":[{"name":"wayfinder:task"}]}`, 1))
+	for a.selected() != 222 {
+		a.key("tab")
+	}
+	a.key("enter")
+	if !a.has("#302 Point CI at the standalone image · claimed · task") || !a.has("#301 Remove the vendored copy · closed") {
+		t.Errorf("the sub-issues don't show their state and type:\n%s", a.view())
+	}
+}
+
 // The status line drops hints a pane has no room for, the least needed
 // first, but always says how to go back and quit.
 func TestTheDetailStatusLineFitsThePane(t *testing.T) {

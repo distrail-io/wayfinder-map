@@ -131,6 +131,28 @@ func (m *Map) Ticket(n int) *Ticket {
 
 type nodes[T any] struct{ Nodes []T }
 
+type rawLabels nodes[struct{ Name string }]
+
+// names are the labels' names, sanitised.
+func (l rawLabels) names() []string {
+	var out []string
+	for _, n := range l.Nodes {
+		out = append(out, Sanitize(n.Name))
+	}
+	return out
+}
+
+type rawLogins nodes[struct{ Login string }]
+
+// logins are the users' logins, sanitised.
+func (l rawLogins) logins() []string {
+	var out []string
+	for _, n := range l.Nodes {
+		out = append(out, Sanitize(n.Login))
+	}
+	return out
+}
+
 type pageInfo struct{ HasNextPage bool }
 
 // gqlErrors is the top-level errors array of a GraphQL response.
@@ -166,8 +188,8 @@ type rawMap struct {
 						Number    int
 						Title     string
 						State     string
-						Labels    nodes[struct{ Name string }]
-						Assignees nodes[struct{ Login string }]
+						Labels    rawLabels
+						Assignees rawLogins
 						BlockedBy struct {
 							PageInfo pageInfo
 							Nodes    []struct {
@@ -204,14 +226,7 @@ func Parse(raw []byte) (*Map, error) {
 	var moreBlockers []int
 	for _, n := range is.SubIssues.Nodes {
 		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Closed: n.State == "CLOSED"}
-		var labels []string
-		for _, l := range n.Labels.Nodes {
-			labels = append(labels, l.Name)
-		}
-		t.Type = typeOf(labels)
-		for _, a := range n.Assignees.Nodes {
-			t.Assignees = append(t.Assignees, Sanitize(a.Login))
-		}
+		t.Type, t.Assignees = typeOf(n.Labels.names()), n.Assignees.logins()
 		for _, b := range n.BlockedBy.Nodes {
 			t.Blockers = append(t.Blockers, Blocker{Sanitize(b.Repository.NameWithOwner), b.Number, b.State == "CLOSED"})
 		}

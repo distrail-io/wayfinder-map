@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -82,13 +83,17 @@ func TestContract(t *testing.T) {
 		if len(is.Blocking) == 0 || is.Blocking[0].Title == "" || is.Blocking[0].Repo != contractRepo {
 			t.Errorf("issue #%d blocks %+v, want some with titles", contractIssue, is.Blocking)
 		}
-		// The map issue has sub-issues.
+		// The map issue has sub-issues, the tickets, with their labels.
 		raw, err = g.LoadIssue(ctx, contractRepo, contractMap)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if m, err := wayfinder.ParseIssue(raw); err != nil || len(m.SubIssues) == 0 || m.SubTotal == 0 {
-			t.Errorf("map issue #%d: %d sub-issues of %d, err %v", contractMap, len(m.SubIssues), m.SubTotal, err)
+		m, err := wayfinder.ParseIssue(raw)
+		if err != nil || len(m.SubIssues) == 0 || m.SubTotal == 0 {
+			t.Fatalf("map issue #%d: %d sub-issues of %d, err %v", contractMap, len(m.SubIssues), m.SubTotal, err)
+		}
+		if !slices.ContainsFunc(m.SubIssues, func(r wayfinder.Related) bool { return r.Type != wayfinder.NoType }) {
+			t.Errorf("map issue #%d's sub-issues have no wayfinder:* type: %+v", contractMap, m.SubIssues)
 		}
 	})
 

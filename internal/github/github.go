@@ -63,7 +63,13 @@ const IssueQuery = `query($owner: String!, $name: String!, $number: Int!) {
       assignees(first: 10) { nodes { login } }
       parent { number title state repository { nameWithOwner } }
       subIssuesSummary { total completed }
-      subIssues(first: 100) { nodes { number title state repository { nameWithOwner } } }
+      subIssues(first: 100) {
+        nodes {
+          number title state repository { nameWithOwner }
+          assignees(first: 10) { nodes { login } }
+          labels(first: 20) { nodes { name } }
+        }
+      }
       blockedBy(first: 50) { nodes { number title state repository { nameWithOwner } } }
       blocking(first: 50) { nodes { number title state repository { nameWithOwner } } }
     }

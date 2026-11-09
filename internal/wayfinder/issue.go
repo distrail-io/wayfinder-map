@@ -39,6 +39,11 @@ type Related struct {
 	Number int
 	Title  string
 	Closed bool
+
+	// Only a sub-issue's are fetched: its assignees, and the type its
+	// labels name. Type is empty for the others.
+	Assignees []string
+	Type      Type
 }
 
 // Ref names the issue as seen from repo: #N, or owner/repo#N when it lives
@@ -76,6 +81,23 @@ func relatedOf(rs []rawRelated) []Related {
 	return out
 }
 
+// rawSubIssue is a sub-issue, which comes with its assignees and labels.
+type rawSubIssue struct {
+	rawRelated
+	Assignees rawLogins
+	Labels    rawLabels
+}
+
+func subIssuesOf(rs []rawSubIssue) []Related {
+	var out []Related
+	for _, r := range rs {
+		s := r.related()
+		s.Assignees, s.Type = r.Assignees.logins(), typeOf(r.Labels.names())
+		out = append(out, s)
+	}
+	return out
+}
+
 // ParseIssue reads the response to github.IssueQuery.
 func ParseIssue(raw []byte) (*Issue, error) {
 	var r struct {
@@ -89,11 +111,11 @@ func ParseIssue(raw []byte) (*Issue, error) {
 					State            string
 					Body             string
 					BodyHTML         string
-					Labels           nodes[struct{ Name string }]
-					Assignees        nodes[struct{ Login string }]
+					Labels           rawLabels
+					Assignees        rawLogins
 					Parent           *rawRelated
 					SubIssuesSummary struct{ Total, Completed int }
-					SubIssues        nodes[rawRelated]
+					SubIssues        nodes[rawSubIssue]
 					BlockedBy        nodes[rawRelated]
 					Blocking         nodes[rawRelated]
 				}
@@ -114,15 +136,10 @@ func ParseIssue(raw []byte) (*Issue, error) {
 	out := &Issue{
 		Repo: Sanitize(repo.NameWithOwner), Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED",
 		Body: is.Body, BodyHTML: is.BodyHTML, SubTotal: is.SubIssuesSummary.Total, SubDone: is.SubIssuesSummary.Completed,
-		SubIssues: relatedOf(is.SubIssues.Nodes), BlockedBy: relatedOf(is.BlockedBy.Nodes), Blocking: relatedOf(is.Blocking.Nodes),
-	}
-	for _, l := range is.Labels.Nodes {
-		out.Labels = append(out.Labels, Sanitize(l.Name))
+		Labels: is.Labels.names(), Assignees: is.Assignees.logins(),
+		SubIssues: subIssuesOf(is.SubIssues.Nodes), BlockedBy: relatedOf(is.BlockedBy.Nodes), Blocking: relatedOf(is.Blocking.Nodes),
 	}
 	out.Type = typeOf(out.Labels)
-	for _, a := range is.Assignees.Nodes {
-		out.Assignees = append(out.Assignees, Sanitize(a.Login))
-	}
 	if is.Parent != nil {
 		p := is.Parent.related()
 		out.Parent = &p

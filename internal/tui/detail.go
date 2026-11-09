@@ -353,7 +353,7 @@ func (m Model) detailLayout() detailLayout {
 		}
 		heading(fmt.Sprintf("Sub-issues · %d/%d done", done, len(m.shown.Tickets)))
 		for _, t := range m.shown.Tickets {
-			link(wayfinder.Related{Repo: m.shown.Repo, Number: t.Number, Title: t.Title, Closed: t.Closed}, t.State.String())
+			link(wayfinder.Related{Repo: m.shown.Repo, Number: t.Number, Title: t.Title, Closed: t.Closed}, t.State.String()+withType(t.Type))
 		}
 		add("")
 	case pending:
@@ -362,7 +362,7 @@ func (m Model) detailLayout() detailLayout {
 	case is != nil && (is.SubTotal > 0 || len(is.SubIssues) > 0):
 		heading(fmt.Sprintf("Sub-issues · %d/%d done", is.SubDone, is.SubTotal))
 		for _, r := range is.SubIssues {
-			link(r, m.stateOf(r))
+			link(r, m.stateOf(r)+withType(r.Type))
 		}
 		add("")
 	}
@@ -445,15 +445,27 @@ func (m Model) related(r ref, closed bool) wayfinder.Related {
 	return out
 }
 
-// stateOf is a related issue's state on the map, else open or closed.
+// stateOf is a related issue's state on the map, else closed, claimed if
+// it is known to be assigned, or open.
 func (m Model) stateOf(r wayfinder.Related) string {
 	switch t := m.ticket(ref{r.Repo, r.Number}); {
 	case t != nil:
 		return t.State.String()
 	case r.Closed:
 		return "closed"
+	case len(r.Assignees) > 0:
+		return wayfinder.Claimed.String()
 	}
 	return "open"
+}
+
+// withType follows a state with a type, if it is known and one of
+// Wayfinder's.
+func withType(t wayfinder.Type) string {
+	if t == "" || t == wayfinder.NoType {
+		return ""
+	}
+	return " · " + string(t)
 }
 
 // detailView is the detail view's rows from the scroll offset, with the
