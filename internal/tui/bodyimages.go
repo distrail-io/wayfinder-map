@@ -17,18 +17,21 @@ import (
 // placeholders like the mini-map's, where the mini-map is drawn. Each is
 // fetched once, by asset, as soon as the issue arrives, since its signed
 // URL soon expires; refreshing signs the URL afresh but finds the asset
-// already fetched.
+// already fetched. Only an image whose fetch failed, as in a network blip,
+// is fetched again on refreshing, from its fresh URL.
 
 // picture is a body image fetched, or being fetched.
 type picture struct {
 	img    image.Image // nil while it loads, or if it failed
 	failed bool
+	retry  bool // it failed to fetch, rather than to decode
 }
 
 type pictureMsg struct {
-	asset string
-	img   image.Image
-	err   error
+	asset   string
+	img     image.Image
+	err     error
+	fetched bool // the error is the decode's, not the fetch's
 }
 
 // slot is where a body image is shown: the asset and the cells it spans.
@@ -44,9 +47,9 @@ func imageID(n int) int { return kitty.ID(1 + n) }
 // imageShare is the most of the view's height, in percent, an image takes.
 const imageShare = 60
 
-// fetchImages fetches the focus body's images that aren't fetched, or being
-// fetched, from GitHub's image hosts. Without inline images there is no
-// need.
+// fetchImages fetches the focus body's images from GitHub's image hosts:
+// those not fetched, or being fetched, and those that failed to fetch.
+// Without inline images there is no need.
 func (m Model) fetchImages() (Model, tea.Cmd) {
 	if !m.images() {
 		return m, nil
@@ -54,10 +57,12 @@ func (m Model) fetchImages() (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	for _, im := range m.detail.images {
 		a := images.Asset(im.URL)
-		if _, ok := m.pictures[a]; ok || !images.Allowed(im.URL) {
+		p, ok := m.pictures[a]
+		if (ok && !p.retry) || !images.Allowed(im.URL) {
 			continue
 		}
-		m = m.withPicture(a, picture{})
+		// One fetched again stays a placeholder meanwhile, not loading.
+		m = m.withPicture(a, picture{failed: p.failed})
 		fetch, url := m.cfg.FetchImage, im.URL
 		cmds = append(cmds, func() tea.Msg {
 			data, err := fetch(url)
@@ -65,7 +70,7 @@ func (m Model) fetchImages() (Model, tea.Cmd) {
 				return pictureMsg{asset: a, err: err}
 			}
 			img, err := images.Decode(data)
-			return pictureMsg{a, img, err}
+			return pictureMsg{a, img, err, true}
 		})
 	}
 	return m, tea.Batch(cmds...)
@@ -84,7 +89,8 @@ func (m Model) withPicture(asset string, p picture) Model {
 // pictured takes a fetched image, or its failure, and shows it if the
 // detail view is open.
 func (m Model) pictured(msg pictureMsg) (tea.Model, tea.Cmd) {
-	m = m.withPicture(msg.asset, picture{img: msg.img, failed: msg.err != nil})
+	failed := msg.err != nil
+	m = m.withPicture(msg.asset, picture{img: msg.img, failed: failed, retry: failed && !msg.fetched})
 	if m.view != detailView || m.detail.issue == nil {
 		return m, nil
 	}

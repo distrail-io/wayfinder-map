@@ -261,6 +261,51 @@ func TestRefreshingDoesntFetchImagesAgain(t *testing.T) {
 	}
 }
 
+// An image that failed to fetch, as in a network blip, is fetched again on
+// each refresh, from its URL signed afresh, until it arrives; then it isn't
+// fetched again.
+func TestImagesThatFailedToFetchAreFetchedAgainOnRefresh(t *testing.T) {
+	a, _ := images(t, "map-214.json")
+	a.key("enter")
+	a.wait(time.Second)
+	if !a.has("🖼 pilot diagram") || len(a.fetches) != 1 {
+		t.Fatalf("fetched %q; view:\n%s", a.fetches, a.view())
+	}
+	a.wait(tui.DefaultInterval)
+	if !a.has("🖼 pilot diagram") || len(a.fetches) != 2 {
+		t.Fatalf("the poll fetched %q; view:\n%s", a.fetches, a.view())
+	}
+	a.pics = map[string][]byte{signed: pic(1200, 400)}
+	a.key("r")
+	raw := a.wait(time.Second)
+	if len(a.fetches) != 3 || len(transmittedAs(t, raw, firstImage)) != 1 {
+		t.Fatalf("r fetched %q and sent the image %d times", a.fetches, len(transmittedAs(t, raw, firstImage)))
+	}
+	a.key("G")
+	if rows, _ := a.imageRows(17); len(rows) != 12 || a.has("🖼") {
+		t.Errorf("the image didn't replace its placeholder:\n%s", a.view())
+	}
+	a.wait(tui.DefaultInterval)
+	if len(a.fetches) != 3 {
+		t.Errorf("fetched the image again once it arrived: %q", a.fetches)
+	}
+}
+
+// An image that was fetched but can't be shown would be the same again,
+// so it isn't fetched again.
+func TestImagesThatCantBeShownArentFetchedAgain(t *testing.T) {
+	a, _ := images(t, "map-214.json")
+	a.pics = map[string][]byte{signed: []byte("<html>sign in</html>")}
+	a.key("enter")
+	a.wait(time.Second)
+	a.wait(tui.DefaultInterval)
+	a.key("r")
+	a.wait(time.Second)
+	if !a.has("🖼 pilot diagram") || len(a.fetches) != 1 {
+		t.Errorf("fetched %q; view:\n%s", a.fetches, a.view())
+	}
+}
+
 // Leaving the detail view, quitting, or moving to another issue deletes
 // the body's images by ID. Coming back shows them again without fetching
 // them again.
