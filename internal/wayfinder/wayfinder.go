@@ -176,16 +176,12 @@ func Parse(raw []byte) (*Map, error) {
 	m := &Map{Repo: repo.NameWithOwner, Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED"}
 	var moreBlockers []int
 	for _, n := range is.SubIssues.Nodes {
-		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Type: NoType, Closed: n.State == "CLOSED"}
+		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Closed: n.State == "CLOSED"}
+		var labels []string
 		for _, l := range n.Labels.Nodes {
-			name, ok := strings.CutPrefix(l.Name, "wayfinder:")
-			switch typ := Type(name); typ {
-			case Research, Prototype, Grilling, Task:
-				if ok {
-					t.Type = typ
-				}
-			}
+			labels = append(labels, l.Name)
 		}
+		t.Type = typeOf(labels)
 		for _, a := range n.Assignees.Nodes {
 			t.Assignees = append(t.Assignees, a.Login)
 		}
@@ -372,6 +368,21 @@ func ParseList(raw []byte) (List, error) {
 		l.Maps = append(l.Maps, s)
 	}
 	return l, nil
+}
+
+// typeOf is the type the last wayfinder:* type label names, else NoType.
+func typeOf(labels []string) Type {
+	t := NoType
+	for _, l := range labels {
+		name, ok := strings.CutPrefix(l, "wayfinder:")
+		switch typ := Type(name); typ {
+		case Research, Prototype, Grilling, Task:
+			if ok {
+				t = typ
+			}
+		}
+	}
+	return t
 }
 
 func classify(t *Ticket) State {

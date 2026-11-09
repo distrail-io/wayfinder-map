@@ -23,6 +23,22 @@ type fakeSource struct {
 	err    error
 	loaded []int
 	lists  int
+
+	issues      map[string][]byte // by owner/repo#number
+	issueErr    error
+	issueLoaded []string
+}
+
+func (f *fakeSource) LoadIssue(_ context.Context, repo string, n int) ([]byte, error) {
+	ref := fmt.Sprintf("%s#%d", repo, n)
+	f.issueLoaded = append(f.issueLoaded, ref)
+	if f.issueErr != nil {
+		return nil, f.issueErr
+	}
+	if raw, ok := f.issues[ref]; ok {
+		return raw, nil
+	}
+	return []byte(`{"data":{"repository":{"nameWithOwner":"` + repo + `","issue":null}}}`), nil
 }
 
 func (f *fakeSource) LoadMap(_ context.Context, n int) ([]byte, error) {
