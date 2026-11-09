@@ -9,6 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/distrail-io/wayfinder-map/internal/draw"
+	"github.com/distrail-io/wayfinder-map/internal/kitty"
+	"github.com/distrail-io/wayfinder-map/internal/layout"
 	"github.com/distrail-io/wayfinder-map/internal/markdown"
 	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
 )
@@ -20,11 +23,12 @@ type ref struct {
 }
 
 // detail is the detail view's state: where it has been, its cursor and
-// scroll, and the focus issue once fetched.
+// scroll, the mini-map's direction, and the focus issue once fetched.
 type detail struct {
-	stack  []ref // the back stack; the last is the focus
-	cursor int   // the related issue under the cursor, or -1
-	scroll int   // the first line shown
+	stack  []ref      // the back stack; the last is the focus
+	cursor int        // the related issue under the cursor, or -1
+	scroll int        // the first line shown
+	dir    layout.Dir // the mini-map's, LR on opening whatever the map's
 
 	issue *wayfinder.Issue // the focus, fetched; nil until then
 	body  []string         // the issue's body, rendered to the pane's width
@@ -47,15 +51,16 @@ func (m Model) openDetail(r ref) (tea.Model, tea.Cmd) {
 		stack = slices.Clip(m.detail.stack)
 	}
 	m.view = detailView
-	m.gen++ // a pending draw would cover the view
-	m, load := m.recentre(append(stack, r))
+	m, load := m.recentre(append(stack, r)) // its redraw supersedes the map's
 	return m, tea.Batch(m.clear(), load)
 }
 
-// recentre makes the top of stack the focus and fetches it.
+// recentre makes the top of stack the focus, fetches it and draws its
+// mini-map.
 func (m Model) recentre(stack []ref) (Model, tea.Cmd) {
-	m.detail = detail{stack: stack, cursor: -1}
-	return m, m.loadIssue()
+	m.detail = detail{stack: stack, cursor: -1, dir: m.detail.dir}
+	m, redraw := m.redraw()
+	return m, tea.Batch(m.loadIssue(), redraw)
 }
 
 // detailBack steps back to the previous focus, or leaves for the map with
@@ -67,8 +72,10 @@ func (m Model) detailBack() (tea.Model, tea.Cmd) {
 	if f := m.focus(); f.repo == m.shown.Repo && m.shown.Ticket(f.number) != nil {
 		m.sel = f.number
 	}
+	del := m.deleteMiniMap()
 	m.view, m.detail = mapView, detail{}
-	return m.relayout().redraw()
+	m, redraw := m.relayout().redraw()
+	return m, tea.Batch(del, redraw)
 }
 
 // loadIssue fetches the focus issue.
@@ -103,7 +110,8 @@ func (m Model) renderBody() Model {
 }
 
 func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
-	rows, targets := m.detailRows()
+	l := m.detailLayout()
+	rows, targets := l.rows, l.targets
 	h := m.detailHeight()
 	d := &m.detail
 	switch k {
@@ -114,6 +122,10 @@ func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
 		return m, m.open(f.repo, f.number)
 	case "c":
 		m.look = otherLook[m.look]
+		return m.redraw()
+	case "d":
+		d.dir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[d.dir]
+		return m.redraw()
 	case "tab", "shift+tab":
 		if len(targets) == 0 {
 			break
@@ -123,9 +135,16 @@ func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
 		} else {
 			d.cursor = (max(d.cursor, 0) + len(targets) - 1) % len(targets)
 		}
-		// Scroll the cursor's row into view.
-		at := slices.IndexFunc(rows, func(r detailRow) bool { return r.target == d.cursor })
-		d.scroll = min(max(d.scroll, at-h+1), at)
+		// Scroll the cursor's card or row into view.
+		from := slices.IndexFunc(rows, func(r detailRow) bool { return r.target == d.cursor })
+		to := from
+		if i := d.cursor - l.firstCard; l.mini != nil && i >= 0 && i < len(l.mini.cards) {
+			from, to = m.cardRows(l.mini, l.mini.cards[i])
+			from, to = l.miniAt+from, l.miniAt+to
+		}
+		d.scroll = clampScroll(min(max(d.scroll, to-h+1), from), len(rows), h)
+		// The ring moves with the cursor.
+		return m.redraw()
 	case "enter":
 		if d.cursor >= 0 && d.cursor < len(targets) {
 			return m.recentre(append(slices.Clip(d.stack), targets[d.cursor]))
@@ -159,15 +178,26 @@ type detailRow struct {
 	target int // an index into the targets, or -1
 }
 
-// detailRows lays the detail view out: the header, the relationships and
+// detailLayout is the detail view laid out: its rows, the related issues
+// the cursor moves through, in the order shown, and the mini-map, if any.
+type detailLayout struct {
+	rows      []detailRow
+	targets   []ref
+	mini      *mini
+	miniAt    int // the row the mini-map's image starts on
+	firstCard int // the target of the mini-map's first card
+}
+
+// detailLayout lays the detail view out: the header, the relationships and
 // the body. Whatever the map knows shows before the issue is fetched; the
-// rest says it is loading. It also returns the related issues the cursor
-// moves through, in the order shown.
-func (m Model) detailRows() ([]detailRow, []ref) {
+// rest says it is loading. With images, the focus ticket's blockers on the
+// map and what it blocks are drawn as a mini-map rather than listed.
+func (m Model) detailLayout() detailLayout {
 	f := m.focus()
 	is := m.detail.issue
 	ticket := m.ticket(f)
 	isMap := f.repo == m.shown.Repo && f.number == m.shown.Number
+	mi := m.miniMap()
 	var rows []detailRow
 	var targets []ref
 	add := func(s string) { rows = append(rows, detailRow{ansi.Truncate(s, m.cols, "…"), -1}) }
@@ -250,11 +280,36 @@ func (m Model) detailRows() ([]detailRow, []ref) {
 		add("")
 		add("Blocked by and blocks: " + loading)
 	}
-	for _, sec := range []struct {
+	l := detailLayout{firstCard: len(targets)}
+	sections := []struct {
 		name    string
 		rs      []wayfinder.Related
 		undrawn bool
-	}{{"Blocked by", drawn, false}, {"Blocks", blocks, false}, {"Also blocked by", undrawn, true}} {
+	}{{"Blocked by", drawn, false}, {"Blocks", blocks, false}, {"Also blocked by", undrawn, true}}
+	switch {
+	case mi != nil && len(mi.cards) == 0:
+		add("")
+		add("no dependencies")
+		sections = sections[2:]
+	case mi != nil:
+		// The mini-map, then in the compact look the titles its circles
+		// hide.
+		add("")
+		l.mini, l.miniAt = mi, len(rows)
+		for _, p := range kitty.Placeholders(miniMapID, mi.cols, mi.rows) {
+			rows = append(rows, detailRow{p, -1})
+		}
+		for _, n := range mi.cards {
+			r := m.related(ref{m.shown.Repo, n}, false)
+			if m.look == draw.Compact {
+				link(r, m.stateOf(r))
+			} else {
+				targets = append(targets, ref{r.Repo, r.Number})
+			}
+		}
+		sections = sections[2:]
+	}
+	for _, sec := range sections {
 		if len(sec.rs) == 0 {
 			continue
 		}
@@ -304,7 +359,8 @@ func (m Model) detailRows() ([]detailRow, []ref) {
 			rows = append(rows, detailRow{l, -1})
 		}
 	}
-	return rows, targets
+	l.rows, l.targets = rows, targets
+	return l
 }
 
 // facts is the header's line of state, type and assignees. The map issue
@@ -372,7 +428,7 @@ func (m Model) stateOf(r wayfinder.Related) string {
 // detailView is the detail view's rows from the scroll offset, with the
 // cursor's row marked, and its status line at the bottom.
 func (m Model) detailView() tea.View {
-	rows, _ := m.detailRows()
+	rows := m.detailLayout().rows
 	h := m.detailHeight()
 	from := clampScroll(m.detail.scroll, len(rows), h)
 	rows = rows[from:min(len(rows), from+h)]
@@ -385,8 +441,12 @@ func (m Model) detailView() tea.View {
 	}
 	b.WriteString(strings.Repeat("\n", max(0, h-len(rows))))
 	f := m.focus()
-	status := fmt.Sprintf("%s · tab select · enter open · b back · o browser · c look: %s · r refresh · q quit",
-		wayfinder.Related{Repo: f.repo, Number: f.number}.Ref(m.shown.Repo), m.look)
+	dir := ""
+	if m.images() {
+		dir = " · d dir: " + m.detail.dir.String()
+	}
+	status := fmt.Sprintf("%s · tab select · enter open · b back · o browser · c look: %s%s · r refresh · q quit",
+		wayfinder.Related{Repo: f.repo, Number: f.number}.Ref(m.shown.Repo), m.look, dir)
 	if m.err != nil {
 		status = "error: " + m.err.Error()
 	}

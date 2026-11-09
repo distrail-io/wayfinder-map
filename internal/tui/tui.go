@@ -1,7 +1,8 @@
 // Package tui is the Bubble Tea app. A picker lists the repo's open maps; a
 // map is shown as a Kitty-graphics image, or as a list grouped by state,
 // with the selected ticket in a strip and a status line below; the detail
-// view shows one issue in full, with its relationships and body. All three
+// view shows one issue in full, with its relationships, drawn as a mini-map
+// where the terminal shows images inline, and its body. All three
 // refresh on an interval, and the map is redrawn only when it changes.
 package tui
 
@@ -56,6 +57,10 @@ type Config struct {
 
 	// NoMouse leaves the mouse to the terminal, for its own text selection.
 	NoMouse bool
+	// Images shows the detail view's mini-map inline, with Kitty Unicode
+	// placeholders. Without it, or in list mode, the detail view lists the
+	// focus ticket's blockers and what it blocks as text.
+	Images bool
 }
 
 const DefaultInterval = 30 * time.Second
@@ -222,7 +227,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cellW, m.cellH = m.cfg.CellSize(m.cols, m.rows)
 		return m.renderBody().fit().redraw()
 	case drawMsg:
-		if int(msg) != m.gen || m.cfg.List || m.shown == nil || m.view != mapView {
+		if int(msg) != m.gen || m.shown == nil {
+			break
+		}
+		if m.view == detailView {
+			return m, m.miniMapImage()
+		}
+		if m.cfg.List || m.view != mapView {
 			break
 		}
 		if m.cols <= 0 || m.graphRows() <= 0 {
@@ -382,7 +393,7 @@ func firstSelection(mp *wayfinder.Map) int {
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "q", "ctrl+c":
-		return m, tea.Sequence(m.clear(), tea.Quit)
+		return m, tea.Sequence(m.clear(), m.deleteMiniMap(), tea.Quit)
 	case "r":
 		if m.loading {
 			return m, nil
