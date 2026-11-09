@@ -68,12 +68,17 @@ func (m Model) recentre(stack []wayfinder.IssueRef) (Model, tea.Cmd) {
 	return m, tea.Batch(del, m.loadIssue(), redraw)
 }
 
-// detailBack steps back to the previous focus, or leaves for the map with
-// the last focus selected if it is on the map.
+// detailBack steps back to the previous focus, or leaves for the map.
 func (m Model) detailBack() (tea.Model, tea.Cmd) {
 	if len(m.detail.stack) > 1 {
 		return m.recentre(m.detail.stack[:len(m.detail.stack)-1])
 	}
+	return m.leaveDetail()
+}
+
+// leaveDetail goes back to the map, however far the view has walked, with
+// the focus selected if it is on the map.
+func (m Model) leaveDetail() (tea.Model, tea.Cmd) {
 	if f := m.focus(); m.ticket(f) != nil {
 		m.sel = f.Number
 	}
@@ -122,7 +127,9 @@ func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
 	h := m.detailHeight()
 	d := &m.detail
 	switch k {
-	case "esc", "b":
+	case "esc":
+		return m.leaveDetail()
+	case "b":
 		return m.detailBack()
 	case "o":
 		f := m.focus()
@@ -230,7 +237,7 @@ func (m Model) detailView() tea.View {
 
 // detailStatus is the focus's name and the keys, with the c and d hints
 // naming what they are set to. A narrow pane drops the hints least needed
-// first, but keeps the name and how to go back and quit.
+// first, but keeps the name and how to go back, to the map and quit.
 func (m Model) detailStatus() string {
 	if m.err != nil {
 		return "error: " + m.err.Error()
@@ -243,7 +250,7 @@ func (m Model) detailStatus() string {
 	}
 	const kept = 7
 	hints := []hint{{f.Ref(m.shown.Repo), kept},
-		{"tab select", 6}, {"enter open", 5}, {"b back", kept}, {"o browser", 2}, {"c look: " + m.look.String(), 4}}
+		{"tab select", 6}, {"enter open", 5}, {"b back", kept}, {"esc map", kept}, {"o browser", 2}, {"c look: " + m.look.String(), 4}}
 	if m.inlineImages() { // only the mini-map has a direction
 		hints = append(hints, hint{"d dir: " + m.detail.dir.String(), 3})
 	}

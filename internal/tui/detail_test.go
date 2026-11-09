@@ -236,8 +236,42 @@ func TestTheDetailViewRefreshesOnThePollAndR(t *testing.T) {
 	}
 }
 
+// Esc leaves the detail view for the map at once, however far it has
+// walked, with the last focus selected.
+func TestEscReturnsToTheMap(t *testing.T) {
+	a, src := ask(t, "map-edge-cases.json", tui.Config{})
+	for a.selected() != 222 {
+		a.key("tab")
+	}
+	a.key("enter")
+	a.tabTo("#221 Move")
+	a.key("enter")
+	a.key("esc")
+	if raw := a.wait(time.Second); placements(raw) != 1 || a.selected() != 221 {
+		t.Errorf("esc didn't return to the map with #221 selected (%d placements):\n%s", placements(raw), a.view())
+	}
+	if want := []string{"banked/ask-barry#222", "banked/ask-barry#221"}; !slices.Equal(src.issueLoaded, want) {
+		t.Errorf("loaded %v, want %v", src.issueLoaded, want)
+	}
+}
+
+// A focus that isn't on the map leaves the selection where it was.
+func TestEscFromAnIssueOffTheMapKeepsTheSelection(t *testing.T) {
+	a, _ := ask(t, "map-edge-cases.json", tui.Config{})
+	for a.selected() != 222 {
+		a.key("tab")
+	}
+	a.key("enter")
+	a.tabTo("other/repo#9")
+	a.key("enter")
+	a.key("esc")
+	if raw := a.wait(time.Second); placements(raw) != 1 || a.selected() != 222 {
+		t.Errorf("esc didn't return to the map with #222 still selected (%d placements):\n%s", placements(raw), a.view())
+	}
+}
+
 // Tab moves a cursor through the related issues and Enter re-centres the
-// view on it, even across repos; Esc and b step back, then to the map.
+// view on it, even across repos; b steps back, then to the map.
 func TestWalkingRelatedIssuesAndBack(t *testing.T) {
 	a, src := ask(t, "map-edge-cases.json", tui.Config{})
 	for a.selected() != 222 {
@@ -258,9 +292,9 @@ func TestWalkingRelatedIssuesAndBack(t *testing.T) {
 	if l := a.row("› "); l < 0 || !strings.Contains(a.lines()[l], "#222") {
 		t.Errorf("shift+tab didn't reach #222:\n%s", a.view())
 	}
-	a.key("esc")
+	a.key("b")
 	if !a.has("#222 Switch ask-barry") {
-		t.Fatalf("esc didn't step back to #222:\n%s", a.view())
+		t.Fatalf("b didn't step back to #222:\n%s", a.view())
 	}
 	a.tabTo("#221 Move")
 	a.key("enter")
@@ -365,7 +399,7 @@ func TestCInTheDetailViewSwitchesTheLook(t *testing.T) {
 func TestTheDetailViewInListMode(t *testing.T) {
 	a, src := ask(t, "map-edge-cases.json", tui.Config{List: true})
 	var raw []string
-	for _, k := range []string{"down", "enter", "tab", "enter", "esc", "esc", "m", "r", "esc"} {
+	for _, k := range []string{"down", "enter", "tab", "enter", "b", "b", "m", "r", "esc"} {
 		raw = append(raw, a.key(k)...)
 		raw = append(raw, a.wait(time.Second)...)
 	}
@@ -445,7 +479,7 @@ func TestTheHeaderSaysWhyATicketWasClosed(t *testing.T) {
 }
 
 // The status line drops hints a pane has no room for, the least needed
-// first, but always says how to go back and quit.
+// first, but always says how to go back, to the map and quit.
 func TestTheDetailStatusLineFitsThePane(t *testing.T) {
 	a, _ := images(t, "map-edge-cases.json")
 	for a.selected() != 222 {
@@ -462,12 +496,12 @@ func TestTheDetailStatusLineFitsThePane(t *testing.T) {
 		if w := ansi.StringWidth(s); w > cols || strings.Contains(s, "…") {
 			t.Errorf("at %d columns the status line is %d wide, or cut: %q", cols, w, s)
 		}
-		for _, want := range []string{"other/repo#9", "b back", "q quit"} {
+		for _, want := range []string{"other/repo#9", "b back", "esc map", "q quit"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("at %d columns the status line lacks %q: %q", cols, want, s)
 			}
 		}
-		if cols == 140 && !strings.Contains(s, "tab select · enter open · b back · o browser · c look: compact · d dir: LR · r refresh · q quit") {
+		if cols == 140 && !strings.Contains(s, "tab select · enter open · b back · esc map · o browser · c look: compact · d dir: LR · r refresh · q quit") {
 			t.Errorf("a wide pane dropped hints: %q", s)
 		}
 	}

@@ -325,7 +325,7 @@ func TestLeavingDeletesBodyImages(t *testing.T) {
 	if raw := a.key("enter"); !slices.Contains(raw, deleteImage(firstImage)) {
 		t.Errorf("moving to the map issue didn't delete the image: %q", raw)
 	}
-	a.key("esc")
+	a.key("b")
 	a.wait(time.Second)
 	if raw := a.key("q"); !a.quit || !slices.Contains(raw, deleteImage(firstImage)) {
 		t.Errorf("q in the detail view: quit %v, raw %q", a.quit, raw)

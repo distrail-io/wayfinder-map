@@ -51,7 +51,8 @@ It shows what the map already knows at once, and the rest once the issue has loa
 |---|---|
 | `tab` / `shift+tab` | move the cursor through the related issues and the mini-map's tickets, including issues in other repos |
 | `enter` | open the issue under the cursor |
-| `b` / `esc` | go back to the previous issue, then to the map |
+| `b` | go back to the previous issue, then to the map |
+| `esc` | go back to the map |
 | `j` / `k` / `↑` / `↓` | scroll a line |
 | `pgup` / `pgdn` / `space` | scroll a page |
 | `g` / `G` | go to the top or the bottom |
