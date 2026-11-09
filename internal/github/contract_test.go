@@ -73,8 +73,8 @@ func TestContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if is.Repo != contractRepo || is.Number != contractIssue || is.Title == "" || is.Body == "" {
-			t.Errorf("issue = %s#%d %q, body %d bytes", is.Repo, is.Number, is.Title, len(is.Body))
+		if is.Repo != contractRepo || is.Number != contractIssue || is.Title == "" || is.Body == "" || is.BodyHTML == "" {
+			t.Errorf("issue = %s#%d %q, body %d bytes, body HTML %d bytes", is.Repo, is.Number, is.Title, len(is.Body), len(is.BodyHTML))
 		}
 		if is.Parent == nil || is.Parent.Number != contractIssueParent || is.Parent.Title == "" {
 			t.Errorf("issue #%d's parent = %+v, want #%d", contractIssue, is.Parent, contractIssueParent)

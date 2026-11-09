@@ -21,6 +21,9 @@ type Issue struct {
 	// Body is the issue's markdown as GitHub returns it, unsanitised: show
 	// it only through the markdown renderer, which sanitises as it renders.
 	Body string
+	// BodyHTML is the body as GitHub renders it, unsanitised. It is read
+	// only for its images' signed URLs and is never shown.
+	BodyHTML string
 
 	Parent            *Related
 	SubIssues         []Related
@@ -85,6 +88,7 @@ func ParseIssue(raw []byte) (*Issue, error) {
 					Title            string
 					State            string
 					Body             string
+					BodyHTML         string
 					Labels           nodes[struct{ Name string }]
 					Assignees        nodes[struct{ Login string }]
 					Parent           *rawRelated
@@ -109,7 +113,7 @@ func ParseIssue(raw []byte) (*Issue, error) {
 	is := repo.Issue
 	out := &Issue{
 		Repo: repo.NameWithOwner, Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED",
-		Body: is.Body, SubTotal: is.SubIssuesSummary.Total, SubDone: is.SubIssuesSummary.Completed,
+		Body: is.Body, BodyHTML: is.BodyHTML, SubTotal: is.SubIssuesSummary.Total, SubDone: is.SubIssuesSummary.Completed,
 		SubIssues: relatedOf(is.SubIssues.Nodes), BlockedBy: relatedOf(is.BlockedBy.Nodes), Blocking: relatedOf(is.Blocking.Nodes),
 	}
 	for _, l := range is.Labels.Nodes {

@@ -16,8 +16,9 @@ func TestParseIssue(t *testing.T) {
 	want := &wayfinder.Issue{
 		Repo: "banked/ask-barry", Number: 222, Title: "Switch ask-barry to the standalone Sandcastle",
 		Type: wayfinder.Task, Labels: []string{"wayfinder:task"},
-		Body:   "Swap the vendored copy for the standalone one.",
-		Parent: &wayfinder.Related{Repo: "banked/ask-barry", Number: 214, Title: "Wayfinder: run Sandcastle standalone against any Banked repo"},
+		Body:     "Swap the vendored copy for the standalone one.",
+		BodyHTML: `<p dir="auto">Swap the vendored copy for the standalone one.</p>`,
+		Parent:   &wayfinder.Related{Repo: "banked/ask-barry", Number: 214, Title: "Wayfinder: run Sandcastle standalone against any Banked repo"},
 		SubIssues: []wayfinder.Related{
 			{Repo: "banked/ask-barry", Number: 301, Title: "Remove the vendored copy", Closed: true},
 			{Repo: "banked/ask-barry", Number: 302, Title: "Point CI at the standalone image"},
