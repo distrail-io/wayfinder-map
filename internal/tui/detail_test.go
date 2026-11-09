@@ -403,6 +403,35 @@ func TestTheDetailViewIsSanitised(t *testing.T) {
 	}
 }
 
+// The status line drops hints a pane has no room for, the least needed
+// first, but always says how to go back and quit.
+func TestTheDetailStatusLineFitsThePane(t *testing.T) {
+	a, _ := images(t, "map-edge-cases.json")
+	for a.selected() != 222 {
+		a.key("tab")
+	}
+	a.key("enter")
+	a.tabTo("other/repo#9")
+	a.key("enter")
+	a.key("c")
+	status := func() string { l := a.lines(); return l[len(l)-1] }
+	for _, cols := range []int{140, 100, 60, 40} {
+		a.send(tea.WindowSizeMsg{Width: cols, Height: 30})
+		s := status()
+		if w := ansi.StringWidth(s); w > cols || strings.Contains(s, "…") {
+			t.Errorf("at %d columns the status line is %d wide, or cut: %q", cols, w, s)
+		}
+		for _, want := range []string{"other/repo#9", "b back", "q quit"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("at %d columns the status line lacks %q: %q", cols, want, s)
+			}
+		}
+		if cols == 140 && !strings.Contains(s, "tab select · enter open · b back · o browser · c look: compact · d dir: LR · r refresh · q quit") {
+			t.Errorf("a wide pane dropped hints: %q", s)
+		}
+	}
+}
+
 // offMap is map #1 in a/b with one ticket, #7, assigned to who, if anyone,
 // and blocked only by #9 in repo, which isn't on the map.
 func offMap(repo, who string) []byte {

@@ -471,16 +471,39 @@ func (m Model) detailView() tea.View {
 		b.WriteString(ansi.Truncate(r.text, m.cols, "…") + "\n")
 	}
 	b.WriteString(strings.Repeat("\n", max(0, h-len(rows))))
-	f := m.focus()
-	dir := ""
-	if m.images() {
-		dir = " · d dir: " + m.detail.dir.String()
-	}
-	status := fmt.Sprintf("%s · tab select · enter open · b back · o browser · c look: %s%s · r refresh · q quit",
-		wayfinder.Related{Repo: f.repo, Number: f.number}.Ref(m.shown.Repo), m.look, dir)
-	if m.err != nil {
-		status = "error: " + m.err.Error()
-	}
-	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(status, m.cols))
+	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.detailStatus(), m.cols))
 	return m.newView(b.String())
+}
+
+// detailStatus is the focus's name and the keys, with the c and d hints
+// naming what they are set to. A narrow pane drops the hints least needed
+// first, but keeps the name and how to go back and quit.
+func (m Model) detailStatus() string {
+	if m.err != nil {
+		return "error: " + m.err.Error()
+	}
+	f := m.focus()
+	// The lower a hint's rank, the sooner it goes.
+	type hint struct {
+		text string
+		rank int
+	}
+	const kept = 7
+	hints := []hint{{wayfinder.Related{Repo: f.repo, Number: f.number}.Ref(m.shown.Repo), kept},
+		{"tab select", 6}, {"enter open", 5}, {"b back", kept}, {"o browser", 2}, {"c look: " + m.look.String(), 4}}
+	if m.images() { // only the mini-map has a direction
+		hints = append(hints, hint{"d dir: " + m.detail.dir.String(), 3})
+	}
+	hints = append(hints, hint{"r refresh", 1}, hint{"q quit", kept})
+	for drop := 0; ; drop++ {
+		var parts []string
+		for _, h := range hints {
+			if h.rank > drop {
+				parts = append(parts, h.text)
+			}
+		}
+		if s := strings.Join(parts, " · "); drop == kept-1 || ansi.StringWidth(s) <= m.cols {
+			return s
+		}
+	}
 }
