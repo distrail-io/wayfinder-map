@@ -134,7 +134,7 @@ func Render(m *wayfinder.Map, res layout.Result, look Look, sel, focus int, W, H
 // circle draws a ticket as a disc of radius r filled by state, with its
 // type icon above its number.
 func circle(img *image.RGBA, t *wayfinder.Ticket, cx, cy, r, s float64, selected, focus bool) {
-	band := func(from, to float64, col color.Color) {
+	discBand := func(from, to float64, col color.Color) {
 		p := &path{}
 		discTo(p, cx, cy, r+to*s)
 		discBackTo(p, cx, cy, r+from*s)
@@ -142,11 +142,11 @@ func circle(img *image.RGBA, t *wayfinder.Ticket, cx, cy, r, s float64, selected
 	}
 	if focus {
 		for _, b := range focusBands {
-			band(b[0], b[1], fillOf[t.State])
+			discBand(b[0], b[1], fillOf[t.State])
 		}
 	}
 	if selected {
-		band(1, 4, ringCol)
+		discBand(1, 4, ringCol)
 	}
 	p := &path{}
 	discTo(p, cx, cy, r)
@@ -168,11 +168,11 @@ func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected,
 	r := 8 * s
 	if focus {
 		for _, b := range focusBands {
-			band(img, x, y, w, h, r, b[0]*s, b[1]*s, fillOf[t.State])
+			boxBand(img, x, y, w, h, r, b[0]*s, b[1]*s, fillOf[t.State])
 		}
 	}
 	if selected {
-		band(img, x, y, w, h, r, 1*s, 4*s, ringCol)
+		boxBand(img, x, y, w, h, r, 1*s, 4*s, ringCol)
 	}
 	fill(img, roundRect(x, y, w, h, r), fillOf[t.State])
 	tc := textOn
@@ -195,9 +195,9 @@ func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected,
 // lies over the first.
 var focusBands = [][2]float64{{1, 3}, {5, 7}}
 
-// band draws a band around a card, from offset in to out beyond its edge,
+// boxBand draws a band around a card, from offset in to out beyond its edge,
 // punching out its middle by winding the inner path the other way.
-func band(img *image.RGBA, x, y, w, h, r, in, out float64, col color.Color) {
+func boxBand(img *image.RGBA, x, y, w, h, r, in, out float64, col color.Color) {
 	o := out
 	p := roundRect(x-o, y-o, w+2*o, h+2*o, r+o)
 	p.moveTo(x-in, y-in)

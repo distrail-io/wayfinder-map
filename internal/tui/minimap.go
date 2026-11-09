@@ -47,8 +47,7 @@ func (m Model) miniMap() *mini {
 	mi.res = layout.Layered(draw.Graph(mi.mp, m.look), m.detail.dir)
 	maxCols := min(m.cols, kitty.MaxCells)
 	s := mi.res.Scale(float64(maxCols*m.cellW), float64(kitty.MaxCells*m.cellH), m.maxScale())
-	mi.cols = min(maxCols, max(1, int(math.Ceil(mi.res.W*s/float64(m.cellW)))))
-	mi.rows = min(kitty.MaxCells, max(1, int(math.Ceil(mi.res.H*s/float64(m.cellH)))))
+	mi.cols, mi.rows = m.span(mi.res.W*s, mi.res.H*s, maxCols, kitty.MaxCells)
 	// Tab reads along the main axis, so blockers come before what the
 	// focus blocks, then across it.
 	main, cross := func(r layout.Rect) float64 { return r.X }, func(r layout.Rect) float64 { return r.Y }

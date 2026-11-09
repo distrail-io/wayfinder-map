@@ -659,7 +659,7 @@ func TestAFailedListingIsRetried(t *testing.T) {
 	}
 }
 
-// selected is the number of the ticket the details area shows.
+// selected is the number of the ticket the strip shows.
 func (a *app) selected() int {
 	a.t.Helper()
 	v := a.view()

@@ -133,7 +133,7 @@ func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
 		m.look = otherLook[m.look]
 		return m.redraw()
 	case "d":
-		d.dir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[d.dir]
+		d.dir = otherDir[d.dir]
 		return m.redraw()
 	case "tab", "shift+tab":
 		if len(targets) == 0 {

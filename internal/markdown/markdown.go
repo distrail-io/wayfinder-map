@@ -33,9 +33,21 @@ var md = goldmark.New(goldmark.WithExtensions(extension.GFM))
 // table's cell, becomes a 🖼 placeholder with its alt text, as does every
 // image if slot is nil.
 func Render(src string, width int, slot func(n, width int) []string) []string {
-	r := &renderer{src: []byte(presanitise(src)), slot: slot}
-	return r.block(md.Parser().Parse(text.NewReader(r.src)), max(width, 1))
+	lines, _ := walk(src, width, slot)
+	return lines
 }
+
+// walk renders a body in width cells, as Render does, and returns its lines
+// and the images met on the way.
+func walk(src string, width int, slot func(n, width int) []string) ([]string, []Image) {
+	r := &renderer{src: []byte(presanitise(src)), slot: slot}
+	lines := r.block(md.Parser().Parse(text.NewReader(r.src)), max(width, 1))
+	return lines, r.images
+}
+
+// anyWidth is the width Images renders a body at to meet its images, which
+// are the same at any width.
+const anyWidth = 80
 
 // Image is one of a body's images.
 type Image struct {
@@ -54,20 +66,19 @@ type Image struct {
 // without a login. If the counts differ, which image is which is unknown,
 // so none has a URL.
 func Images(src, bodyHTML string) []Image {
-	r := &renderer{src: []byte(presanitise(src))}
-	r.block(md.Parser().Parse(text.NewReader(r.src)), 80)
+	_, images := walk(src, anyWidth, nil)
 	var urls []string
 	for _, m := range tag.FindAllStringSubmatch(comment.ReplaceAllString(bodyHTML, ""), -1) {
 		if strings.EqualFold(m[2], "img") {
 			urls = append(urls, attr(m[3], "src"))
 		}
 	}
-	if len(urls) == len(r.images) {
-		for i := range r.images {
-			r.images[i].URL = urls[i]
+	if len(urls) == len(images) {
+		for i := range images {
+			images[i].URL = urls[i]
 		}
 	}
-	return r.images
+	return images
 }
 
 // presanitise removes escape sequences whole before parsing, which could

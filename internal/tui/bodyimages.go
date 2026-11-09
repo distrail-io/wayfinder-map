@@ -162,11 +162,15 @@ func (m Model) cells(w, h, width int) (cols, rows int) {
 	maxCols := min(width, kitty.MaxCells)
 	maxRows := min(max(1, m.detailHeight()*imageShare/100), kitty.MaxCells)
 	s := min(1, float64(maxCols*m.cellW)/float64(w), float64(maxRows*m.cellH)/float64(h))
-	// Ceil, but not up past a whole number that rounding missed.
+	return m.span(float64(w)*s, float64(h)*s, maxCols, maxRows)
+}
+
+// span is how many cells an image of w×h pixels spans, at least one and at
+// most maxCols by maxRows. A part of a cell counts as a whole one, but not
+// a sliver that rounding left past a whole number.
+func (m Model) span(w, h float64, maxCols, maxRows int) (cols, rows int) {
 	ceil := func(x float64) int { return int(math.Ceil(x - 1e-9)) }
-	cols = min(maxCols, max(1, ceil(float64(w)*s/float64(m.cellW))))
-	rows = min(maxRows, max(1, ceil(float64(h)*s/float64(m.cellH))))
-	return cols, rows
+	return min(maxCols, max(1, ceil(w/float64(m.cellW)))), min(maxRows, max(1, ceil(h/float64(m.cellH))))
 }
 
 // unsent reports whether a body image has arrived that isn't sent at its

@@ -445,7 +445,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		m.look = otherLook[m.look]
 		return m.relayout().redraw()
 	case "d":
-		m.dir, m.autoDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[m.dir], false
+		m.dir, m.autoDir = otherDir[m.dir], false
 		return m.redraw()
 	case "tab", "shift+tab":
 		sel = m.cycle(k == "tab")
@@ -599,6 +599,9 @@ func (m Model) image() string {
 
 // otherLook is the look c switches to.
 var otherLook = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}
+
+// otherDir is the direction d switches to.
+var otherDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}
 
 // newView is a full-screen view of s.
 func (m Model) newView(s string) tea.View {
