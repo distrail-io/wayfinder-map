@@ -342,6 +342,22 @@ func TestAlsoBlockedBySitsUnderTheMiniMap(t *testing.T) {
 	a.tabTo("other/repo#9")
 }
 
+// A ticket blocked only by issues the mini-map can't draw has no mini-map,
+// but it doesn't say it has no dependencies, as a blocked ticket must never
+// look unblocked.
+func TestBlockedOnlyOffTheMapIsNotNoDependencies(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{1: offMap("other/repo", "")}}
+	a := startWith(t, src, tui.Config{Number: 1, Images: true}).sized()
+	a.key("enter")
+	raw := a.wait(time.Second)
+	if a.has("no dependencies") || !a.has("Also blocked by") || !a.has("other/repo#9 · open") {
+		t.Errorf("a ticket blocked off the map:\n%s", a.view())
+	}
+	if len(transmitted(t, raw)) != 0 || strings.Contains(a.view(), cell) {
+		t.Errorf("sent a mini-map of the lone ticket: %q", raw)
+	}
+}
+
 // Without images, or in list mode, the detail view lists the relationships
 // as text and writes no placeholders.
 func TestWithoutImagesTheDetailViewListsRelationships(t *testing.T) {

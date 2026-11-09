@@ -295,8 +295,11 @@ func (m Model) detailLayout() detailLayout {
 	}{{"Blocked by", drawn, false}, {"Blocks", blocks, false}, {"Also blocked by", undrawn, true}}
 	switch {
 	case mi != nil && len(mi.cards) == 0:
-		add("")
-		add("no dependencies")
+		// A blocker off the map is a dependency still.
+		if len(undrawn) == 0 {
+			add("")
+			add("no dependencies")
+		}
 		sections = sections[2:]
 	case mi != nil:
 		// The mini-map, then in the compact look the titles its circles
