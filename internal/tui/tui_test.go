@@ -221,9 +221,9 @@ func TestShowsTheMapAsAKittyImage(t *testing.T) {
 		t.Fatalf("placed an image before Bubble Tea drew its frame: %q", raw)
 	}
 	raw := a.wait(60 * time.Millisecond)
-	// 30 rows less 5 for the details area and 1 for the status line; the
-	// map has no warnings to add rows.
-	if len(raw) != 1 || !strings.Contains(raw[0], "\x1b_Ga=T,f=100,q=2,C=1,c=100,r=24,") {
+	// 30 rows less 3 for the strip and 1 for the status line; the map has
+	// no warnings to add rows.
+	if len(raw) != 1 || !strings.Contains(raw[0], "\x1b_Ga=T,f=100,q=2,C=1,c=100,r=26,") {
 		t.Fatalf("expected one Kitty placement over the graph area, got %q", raw)
 	}
 	for _, want := range []string{"#214", "2 frontier", "6 blocked", "Wayfinder: run Sandcastle"} {
@@ -397,13 +397,12 @@ func TestQuitClearsTheImage(t *testing.T) {
 func TestDetailsShowTheSelectedTicket(t *testing.T) {
 	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
 	a := start(t, src, 214).sized()
-	// The first frontier ticket starts selected.
+	// The first frontier ticket starts selected; it blocks two others.
 	for _, want := range []string{
 		"#215 Where does standalone Sandcastle live",
-		"grilling · frontier · unassigned",
-		"blocks: #220 · #221",
+		"· grilling · frontier · ⛔0 ↦2",
 	} {
-		if !strings.Contains(a.view(), want) {
+		if !strings.Contains(a.text(), want) {
 			t.Errorf("details lack %q:\n%s", want, a.view())
 		}
 	}
@@ -426,7 +425,7 @@ func TestArrowsMoveToTheNearestTicket(t *testing.T) {
 	if raw := a.wait(time.Second); placements(raw) != 1 {
 		t.Errorf("moving the selection placed %d images, want 1", placements(raw))
 	}
-	if !strings.Contains(a.view(), "#2 Two") || !strings.Contains(a.view(), "blocked by: #1 (open)") {
+	if !strings.Contains(a.text(), "#2 Two · task · blocked · ⛔1 ↦0") {
 		t.Errorf("right from #1 didn't select #2:\n%s", a.view())
 	}
 	a.key("left")
@@ -519,7 +518,7 @@ func TestRedrawsOnlyOnChange(t *testing.T) {
 		t.Errorf("a changed map placed %d images, want 1", placements(raw))
 	}
 	// #215 is still selected, and is now claimed.
-	if !strings.Contains(a.view(), "grilling · claimed by octocat") {
+	if !strings.Contains(a.text(), "· grilling · claimed ·") {
 		t.Errorf("details don't follow the change:\n%s", a.view())
 	}
 }
@@ -560,14 +559,16 @@ func TestShowsWarnings(t *testing.T) {
 		}
 	}
 	// The graph gives up a row for each.
-	if raw := a.wait(time.Second); len(raw) != 1 || !strings.Contains(raw[0], ",c=80,r=18,") {
-		t.Errorf("want the image over 30-5-6-1 = 18 rows, got %q", raw)
+	if raw := a.wait(time.Second); len(raw) != 1 || !strings.Contains(raw[0], ",c=80,r=20,") {
+		t.Errorf("want the image over 30-3-6-1 = 20 rows, got %q", raw)
 	}
+	// #222's blocker in another repo counts too, and #222 blocks #221 in
+	// a cycle.
 	for !strings.Contains(a.view(), "\x1b[1m#222 ") {
 		a.key("tab")
 	}
-	if !strings.Contains(a.view(), "blocked by: #221 (open) · other/repo#9 (open)") {
-		t.Errorf("#222's cross-repo blocker isn't shown as owner/repo#N:\n%s", a.view())
+	if !strings.Contains(a.text(), "⛔2 ↦1") {
+		t.Errorf("#222's blockers aren't counted:\n%s", a.view())
 	}
 }
 
@@ -641,8 +642,8 @@ func TestAutoDirectionRefitsOnResize(t *testing.T) {
 	a.key("left")
 	a.send(tea.WindowSizeMsg{Width: 30, Height: 100})
 	raw := a.wait(time.Second)
-	if placements(raw) != 1 || !strings.Contains(raw[0], ",c=30,r=94,") {
-		t.Errorf("resizing didn't place the image over the new 30×94 graph area: %q", raw)
+	if placements(raw) != 1 || !strings.Contains(raw[0], ",c=30,r=96,") {
+		t.Errorf("resizing didn't place the image over the new 30×96 graph area: %q", raw)
 	}
 	if a.key("down"); a.selected() != 2 {
 		t.Errorf("in a tall pane, down from #1 selected #%d, want #2", a.selected())
@@ -751,7 +752,7 @@ func TestListNeverWritesKittyEscapes(t *testing.T) {
 func TestAPaneTooShortForTheGraphClearsIt(t *testing.T) {
 	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
 	a := start(t, src, 214).sized()
-	a.send(tea.WindowSizeMsg{Width: 100, Height: 6})
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 4})
 	if raw := a.wait(time.Second); len(raw) != 1 || raw[0] != "\x1b_Ga=d,d=A,q=2\x1b\\" {
 		t.Errorf("want the image cleared, got %q", raw)
 	}

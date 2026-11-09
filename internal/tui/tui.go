@@ -21,6 +21,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/github"
@@ -107,11 +108,12 @@ type (
 // drawDelay lets Bubble Tea paint its frame before the image goes over it.
 const drawDelay = 60 * time.Millisecond
 
-// The details area below the graph: a legend, then the selected ticket's
-// title, type and state, blockers and what it blocks. Then a row for each
-// of the map's warnings, up to maxWarningRows, and the status line last.
+// The strip below the graph: the legend and key hints, then the selected
+// ticket's title over two rows. Then a row for each of the map's warnings,
+// up to maxWarningRows, and the status line last. The strip's height is
+// fixed, so a long title never moves the graph.
 const (
-	detailRows     = 5
+	stripRows      = 3
 	maxWarningRows = 6
 	statusRows     = 1
 )
@@ -508,7 +510,7 @@ func (m Model) redraw() (Model, tea.Cmd) {
 	return m, m.cfg.After(drawDelay, drawMsg(m.gen))
 }
 
-func (m Model) graphRows() int { return m.rows - detailRows - len(m.warnings()) - statusRows }
+func (m Model) graphRows() int { return m.rows - stripRows - len(m.warnings()) - statusRows }
 
 // warnings returns a row for each of the map's warnings, folding any beyond
 // maxWarningRows into the last.
@@ -550,7 +552,7 @@ func (m Model) View() tea.View {
 	} else {
 		b.WriteString(strings.Repeat("\n", max(0, m.graphRows())))
 	}
-	for _, line := range append(m.details(), m.warnings()...) {
+	for _, line := range append(m.strip(), m.warnings()...) {
 		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.status(), m.cols))
@@ -660,83 +662,113 @@ func (m Model) status() string {
 		count[wayfinder.Blocked], count[wayfinder.Done], m.shown.Title)
 }
 
-// details returns the detailRows lines below the graph.
-func (m Model) details() []string {
-	lines := make([]string, detailRows)
+// strip returns the stripRows lines below the graph.
+func (m Model) strip() []string {
+	lines := make([]string, stripRows)
 	if m.shown == nil {
 		return lines
 	}
-	lines[0] = m.legend()
+	lines[0] = m.hints()
 	if t := m.shown.Ticket(m.sel); t != nil {
-		lines[1] = "\x1b[1m" + truncate(fmt.Sprintf("#%d %s", t.Number, t.Title), m.cols) + "\x1b[0m"
-		meta := fmt.Sprintf("%s · %s · unassigned", t.Type, t.State)
-		switch who := strings.Join(t.Assignees, ", "); {
-		case t.State == wayfinder.Claimed:
-			meta = fmt.Sprintf("%s · claimed by %s", t.Type, who)
-		case who != "":
-			meta = fmt.Sprintf("%s · %s · assigned to %s", t.Type, t.State, who)
-		}
-		lines[2] = truncate(meta, m.cols)
-		var by []string
-		for _, b := range t.Blockers {
-			state := "open"
-			if b.Closed {
-				state = "closed"
-			}
-			by = append(by, fmt.Sprintf("%s (%s)", b.Ref(m.shown.Repo), state))
-		}
-		lines[3] = truncate("blocked by: "+orNone(by), m.cols)
-		var blocks []string
-		for _, n := range m.shown.Blocks(t.Number) {
-			blocks = append(blocks, fmt.Sprintf("#%d", n))
-		}
-		lines[4] = truncate("blocks: "+orNone(blocks), m.cols)
+		title := m.titleRows(t)
+		lines[1], lines[2] = title[0], title[1]
 	}
 	return lines
 }
 
-// legend shows what the colours and lines mean, then the keys, as far as
-// the pane is wide.
-func (m Model) legend() string {
-	var b strings.Builder
-	width := 0
-	add := func(styled string, w int) bool {
-		if width+w > m.cols {
-			return false
-		}
-		b.WriteString(styled)
-		width += w
-		return true
-	}
-	for _, s := range []wayfinder.State{wayfinder.Done, wayfinder.Claimed, wayfinder.Frontier, wayfinder.Blocked} {
-		name := s.String()
-		if !add(swatch(s)+" "+name+"  ", 2+1+len([]rune(name))+2) {
-			return b.String()
+// titleRows are the selected ticket's number and title, wrapped over two
+// rows, then its type, state, and counts of its open blockers and of the
+// tickets it blocks. A title too long for both rows is cut with … so that
+// the facts after it still show.
+func (m Model) titleRows(t *wayfinder.Ticket) [2]string {
+	open := 0
+	for _, b := range t.Blockers {
+		if !b.Closed {
+			open++
 		}
 	}
-	keys := []string{"┄ closed blocker  ", "←↑↓→ tab select · c look · d direction · o open · b back · r refresh · q quit"}
-	if m.cfg.List {
-		keys = []string{"↑↓ select · o open · b back · r refresh · q quit"}
+	title := fmt.Sprintf("#%d %s", t.Number, t.Title)
+	facts := fmt.Sprintf(" · %s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number)))
+	lines := strings.Split(ansi.Wrap(title+facts, m.cols, ""), "\n")
+	if len(lines) > 2 {
+		first, _, _ := strings.Cut(ansi.Wrap(title, m.cols, ""), "\n")
+		rest := strings.TrimLeft(strings.TrimPrefix(title, first), " ")
+		second := ansi.Truncate(rest+facts, m.cols, "…")
+		if room := m.cols - ansi.StringWidth(facts); room > 1 {
+			second = ansi.Truncate(rest, room, "…") + facts
+		}
+		lines = []string{first, second}
 	}
-	for _, s := range keys {
-		if !add(s, len([]rune(s))) {
+	lines = append(lines, "")
+	return [2]string{boldPrefix(lines[0], &title), boldPrefix(lines[1], &title)}
+}
+
+// boldPrefix bolds as much of line as is still the start of *title, and
+// moves *title past it, so the title shows bold across the rows it wraps
+// over and the facts after it don't.
+func boldPrefix(line string, title *string) string {
+	rest := strings.TrimLeft(*title, " ")
+	n := 0
+	for i, r := range line {
+		if !strings.HasPrefix(rest[i:], string(r)) {
 			break
 		}
+		n = i + len(string(r))
 	}
-	return b.String()
+	*title = rest[n:]
+	if n == 0 {
+		return line
+	}
+	return "\x1b[1m" + line[:n] + "\x1b[0m" + line[n:]
+}
+
+// hints shows what the colours and lines mean, then the keys, with the c
+// and d hints naming what they are set to. A narrow pane shortens the
+// legend to bare swatches first, then drops the other keys and the legend,
+// and cuts the c and d hints last.
+func (m Model) hints() string {
+	var names, swatches []string
+	for _, s := range []wayfinder.State{wayfinder.Done, wayfinder.Claimed, wayfinder.Frontier, wayfinder.Blocked} {
+		names = append(names, swatch(s)+" "+s.String())
+		swatches = append(swatches, swatch(s))
+	}
+	legends := []string{strings.Join(names, "  ") + "  ┄ closed blocker", strings.Join(swatches, " "), ""}
+	dir := m.dir.String()
+	if m.autoDir {
+		dir = "auto (" + dir + ")"
+	}
+	last := fmt.Sprintf("c look: %s · d dir: %s", m.look, dir)
+	keys := []string{"←↑↓→ tab select", "o open", "b back", "r refresh", "q quit"}
+	if m.cfg.List {
+		last, keys = "↑↓ select", []string{"o open", "b back", "r refresh", "q quit"}
+	}
+	fits := func(s string) bool { return ansi.StringWidth(s) <= m.cols }
+	if all := legends[0] + "  " + last + " · " + strings.Join(keys, " · "); fits(all) {
+		return all
+	}
+	for _, legend := range legends[1:] {
+		row := last
+		if legend != "" {
+			row = legend + "  " + last
+		}
+		if !fits(row) {
+			continue
+		}
+		for _, k := range keys {
+			if !fits(row + " · " + k) {
+				break
+			}
+			row += " · " + k
+		}
+		return row
+	}
+	return ansi.Truncate(last, m.cols, "…")
 }
 
 // swatch is two cells in the state's colour.
 func swatch(s wayfinder.State) string {
 	c := draw.FillOf(s)
 	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B)
-}
-
-func orNone(xs []string) string {
-	if len(xs) == 0 {
-		return "—"
-	}
-	return strings.Join(xs, " · ")
 }
 
 func truncate(s string, n int) string {
