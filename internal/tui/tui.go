@@ -58,10 +58,11 @@ const DefaultInterval = 30 * time.Second
 type Model struct {
 	cfg Config
 
-	// The picker, shown while picking.
-	picking bool
-	list    *wayfinder.List // nil until the first listing arrives
-	pick    int             // the number of the map under the cursor
+	view view
+
+	// The picker.
+	list *wayfinder.List // nil until the first listing arrives
+	pick int             // the number of the map under the cursor
 
 	number     int // the map shown, or being loaded
 	shown      *wayfinder.Map
@@ -78,6 +79,15 @@ type Model struct {
 	gen        int // the latest scheduled draw
 	pollGen    int // the latest scheduled poll
 }
+
+// view is what fills the pane: the picker, a map, or the detail view of
+// one issue.
+type view int
+
+const (
+	pickerView view = iota
+	mapView
+)
 
 type (
 	listedMsg struct {
@@ -121,7 +131,11 @@ func New(cfg Config) Model {
 	if cfg.Open == nil {
 		cfg.Open = openURL
 	}
-	return Model{cfg: cfg, number: cfg.Number, picking: cfg.Number == 0, loading: true,
+	v := mapView
+	if cfg.Number == 0 {
+		v = pickerView
+	}
+	return Model{cfg: cfg, number: cfg.Number, view: v, loading: true,
 		look: cfg.Look, dir: cfg.Dir, autoDir: cfg.AutoDir}
 }
 
@@ -173,12 +187,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case listedMsg:
 		// A listing that arrives after a map was picked is dropped.
-		if m.picking {
+		if m.view == pickerView {
 			return m.listed(msg)
 		}
 	case loadedMsg:
 		// So is a map that arrives after going back to the picker.
-		if !m.picking && msg.number == m.number {
+		if m.view != pickerView && msg.number == m.number {
 			return m.loaded(msg)
 		}
 	case pollMsg:
@@ -292,10 +306,10 @@ func (m Model) schedulePoll() (Model, tea.Cmd) {
 	return m, m.cfg.After(m.cfg.Interval, pollMsg(m.pollGen))
 }
 
-// fetch lists the maps while picking, else loads the map.
+// fetch lists the maps in the picker, else loads the map.
 func (m Model) fetch() (Model, tea.Cmd) {
 	m.loading = true
-	if m.picking {
+	if m.view == pickerView {
 		return m, m.listMaps
 	}
 	return m, m.load
@@ -304,7 +318,7 @@ func (m Model) fetch() (Model, tea.Cmd) {
 // openMap leaves the picker for map n. Polls scheduled for the picker are
 // superseded.
 func (m Model) openMap(n int) (tea.Model, tea.Cmd) {
-	m.picking, m.number, m.shown, m.sel, m.err = false, n, nil, 0, nil
+	m.view, m.number, m.shown, m.sel, m.err = mapView, n, nil, 0, nil
 	m.pollGen++
 	return m.fetch()
 }
@@ -312,7 +326,7 @@ func (m Model) openMap(n int) (tea.Model, tea.Cmd) {
 // back leaves the map for the picker, with its cursor on the map, and
 // clears the image.
 func (m Model) back() (tea.Model, tea.Cmd) {
-	m.picking, m.pick, m.number, m.shown, m.sel, m.err = true, m.number, 0, nil, 0, nil
+	m.view, m.pick, m.number, m.shown, m.sel, m.err = pickerView, m.number, 0, nil, 0, nil
 	m.pollGen++
 	m.gen++
 	m, fetch := m.fetch()
@@ -351,7 +365,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		return m.fetch()
 	}
-	if m.picking {
+	if m.view == pickerView {
 		return m.pickerKey(k)
 	}
 	if k == "b" || k == "esc" {
@@ -525,8 +539,8 @@ func (m Model) image() string {
 }
 
 func (m Model) View() tea.View {
-	if m.picking {
-		return m.pickerView()
+	if m.view == pickerView {
+		return m.picker()
 	}
 	var b strings.Builder
 	if m.cfg.List && m.shown != nil {
@@ -574,9 +588,9 @@ func (m Model) listRows() []string {
 	return append(rows, make([]string, fit-len(rows))...)
 }
 
-// pickerView is a header, a row per map with the cursor's in bold, a hint
+// picker is a header, a row per map with the cursor's in bold, a hint
 // if there are more maps than listed, and the status line at the bottom.
-func (m Model) pickerView() tea.View {
+func (m Model) picker() tea.View {
 	var rows, foot []string
 	header := "Open maps"
 	if m.list != nil {
