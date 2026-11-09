@@ -387,3 +387,22 @@ func TestWithoutImagesTheDetailViewListsRelationships(t *testing.T) {
 		})
 	}
 }
+
+// The text lists stand in for the mini-map: what blocks the focus ticket,
+// the focus ticket, then what it blocks.
+func TestTheTextListsStackTheFocusBetweenItsBlockersAndWhatItBlocks(t *testing.T) {
+	a, _ := ask(t, "map-214.json", tui.Config{})
+	a.key("enter")
+	a.tabTo("#220 Pilot")
+	a.key("enter")
+	order := []string{"Blocked by", "  #215 Where does standalone Sandcastle live", "Focus",
+		"  #220 Pilot: run Sandcastle against a second Banked repo · blocked", "Blocks", "  #221 Move Sandcastle"}
+	last := -1
+	for _, s := range order {
+		r := a.row(s)
+		if r <= last {
+			t.Fatalf("%q isn't after %q:\n%s", s, order[max(0, slices.Index(order, s)-1)], a.view())
+		}
+		last = r
+	}
+}

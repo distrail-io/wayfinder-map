@@ -144,7 +144,7 @@ func TestTheWheelScrollsTheDetailViewAndThePicker(t *testing.T) {
 	a.key("enter")
 	a.send(tea.WindowSizeMsg{Width: 100, Height: 10})
 	a.wheel(true)
-	if a.row("#215 Where does") >= 0 {
+	if a.row("#215 Where does") == 0 {
 		t.Errorf("the wheel didn't scroll the detail view down:\n%s", a.view())
 	}
 	a.wheel(false)

@@ -288,11 +288,15 @@ func (m Model) detailLayout() detailLayout {
 		add("Blocked by and blocks: " + loading)
 	}
 	l := detailLayout{firstCard: len(targets)}
+	// Without a mini-map, the focus stands between the lists of what blocks
+	// it and what it blocks, where the mini-map would draw it.
 	sections := []struct {
 		name    string
 		rs      []wayfinder.Related
 		undrawn bool
-	}{{"Blocked by", drawn, false}, {"Blocks", blocks, false}, {"Also blocked by", undrawn, true}}
+		focus   bool
+	}{{"Blocked by", drawn, false, false}, {"Focus", nil, false, len(drawn) > 0 || len(blocks) > 0},
+		{"Blocks", blocks, false, false}, {"Also blocked by", undrawn, true, false}}
 	switch {
 	case mi != nil && len(mi.cards) == 0:
 		// A blocker off the map is a dependency still.
@@ -300,7 +304,7 @@ func (m Model) detailLayout() detailLayout {
 			add("")
 			add("no dependencies")
 		}
-		sections = sections[2:]
+		sections = sections[3:]
 	case mi != nil:
 		// The mini-map, then in the compact look the titles its circles
 		// hide.
@@ -317,9 +321,14 @@ func (m Model) detailLayout() detailLayout {
 				targets = append(targets, ref{r.Repo, r.Number})
 			}
 		}
-		sections = sections[2:]
+		sections = sections[3:]
 	}
 	for _, sec := range sections {
+		if sec.focus {
+			add("")
+			heading(sec.name)
+			add("  " + m.focusRow(title, ticket, is))
+		}
 		if len(sec.rs) == 0 {
 			continue
 		}
@@ -405,6 +414,18 @@ func (m Model) facts(f ref, is *wayfinder.Issue, t *wayfinder.Ticket, isMap bool
 		parts = append(parts, "assigned to "+strings.Join(who, ", "))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// focusRow is the focus as the text lists show it: its name, as the header
+// gives it, and its state, if known yet.
+func (m Model) focusRow(name string, t *wayfinder.Ticket, is *wayfinder.Issue) string {
+	switch {
+	case t != nil:
+		return name + " · " + t.State.String()
+	case is != nil:
+		return name + " · " + is.State().String()
+	}
+	return name
 }
 
 // ticket is the map's ticket that r names, or nil.
