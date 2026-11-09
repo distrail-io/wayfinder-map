@@ -1,6 +1,7 @@
 package markdown_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func plain(lines []string) []string {
 
 func check(t *testing.T, src string, width int, want ...string) []string {
 	t.Helper()
-	lines := markdown.Render(src, width)
+	lines := markdown.Render(src, width, nil)
 	if got := plain(lines); !slices.Equal(got, want) {
 		t.Errorf("Render(%q, %d) =\n%s\nwant\n%s", src, width, strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
@@ -156,14 +157,14 @@ func TestSanitisesEveryString(t *testing.T) {
 	if s := strings.Join(lines, "\n"); strings.Contains(s, "evil") || strings.Contains(s, "\x1b[31m") {
 		t.Errorf("a code block let an escape through: %q", lines)
 	}
-	lines = markdown.Render("[a](https://example.com/\x1b]8;;evil\x07)", 60)
+	lines = markdown.Render("[a](https://example.com/\x1b]8;;evil\x07)", 60, nil)
 	if s := strings.Join(lines, "\n"); strings.Contains(s, "\x1b]8;;evil") || strings.Count(s, "\x1b]8;;") > 2 {
 		t.Errorf("a link URL let an escape through: %q", lines)
 	}
 }
 
 func TestEmptyBody(t *testing.T) {
-	if lines := markdown.Render("", 40); len(lines) != 0 {
+	if lines := markdown.Render("", 40, nil); len(lines) != 0 {
 		t.Errorf("an empty body rendered %q", lines)
 	}
 }
@@ -184,6 +185,34 @@ func TestImagesTakeTheirURLsFromTheBodyHTML(t *testing.T) {
 	}
 	if got := markdown.Images(body, html); !slices.Equal(got, want) {
 		t.Errorf("Images =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// An image whose slot has lines shows them, on lines of their own, where
+// the image is in the text. Its slot is told its number, counting images
+// in markdown and HTML alike, and the width it may take there.
+func TestImageSlotsShowInPlace(t *testing.T) {
+	var asked []string
+	slot := func(n, width int) []string {
+		asked = append(asked, fmt.Sprintf("%d@%d", n, width))
+		if n == 4 {
+			return nil // not shown: a placeholder
+		}
+		return []string{fmt.Sprintf("[%d]", n), fmt.Sprintf("[%d]", n)}
+	}
+	src := "before ![zero](https://example.com/0.png) after\n\n" +
+		"- ![one](https://example.com/1.png)\n\n" +
+		"> <img alt=\"two\" src=\"https://example.com/2.png\">\n\n" +
+		"| ![in a table](https://example.com/t.png) |\n|---|\n\n" +
+		"![three](https://example.com/3.png)"
+	got := plain(markdown.Render(src, 30, slot))
+	want := []string{"before", "[0]", "[0]", "after", "", "• [1]", "  [1]", "", "│ [2]", "│ [2]", "", "🖼 in a table", "────────────", "", "🖼 three"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Render =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	// A table's cells have no room for an image, but it still counts.
+	if want := []string{"0@30", "1@28", "2@28", "4@30"}; !slices.Equal(asked, want) {
+		t.Errorf("slots asked for %v, want %v", asked, want)
 	}
 }
 

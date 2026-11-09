@@ -26,10 +26,14 @@ import (
 var md = goldmark.New(goldmark.WithExtensions(extension.GFM))
 
 // Render turns a markdown body into lines no wider than width. Raw HTML is
-// reduced to its text, and images, in markdown or HTML, become a 🖼
-// placeholder with their alt text.
-func Render(src string, width int) []string {
-	r := &renderer{src: []byte(presanitise(src))}
+// reduced to its text. Images, in markdown or HTML, are numbered from 0 in
+// the order Images lists them; slot gives the lines that show image n, at
+// most width cells wide where it is, which stand on lines of their own in
+// its place. An image that slot gives no lines for, or that is in a
+// table's cell, becomes a 🖼 placeholder with its alt text, as does every
+// image if slot is nil.
+func Render(src string, width int, slot func(n, width int) []string) []string {
+	r := &renderer{src: []byte(presanitise(src)), slot: slot}
 	return r.block(md.Parser().Parse(text.NewReader(r.src)), max(width, 1))
 }
 
@@ -84,11 +88,14 @@ func presanitise(src string) string {
 
 type renderer struct {
 	src    []byte
+	slot   func(n, width int) []string
 	images []Image // the images met so far
+	width  int     // the width an image may take here; 0 if none
 }
 
 // block renders a block node in width cells.
 func (r *renderer) block(n ast.Node, width int) []string {
+	r.width = width
 	switch n := n.(type) {
 	case *ast.Document:
 		return r.children(n, width, true)
@@ -221,7 +228,7 @@ func (r *renderer) code(n ast.Node, width int) []string {
 			if head == "" { // a character wider than the pane
 				head = string([]rune(l)[:1])
 			}
-			lines = append(lines, render([]frag{{head, style{code: true}}}))
+			lines = append(lines, render([]frag{{text: head, st: style{code: true}}}))
 			l = l[len(head):]
 		}
 	}
@@ -233,6 +240,7 @@ func (r *renderer) code(n ast.Node, width int) []string {
 func (r *renderer) table(n *east.Table, width int) []string {
 	var rows [][]string
 	var widths []int
+	r.width = 0 // a cell has no room for an image
 	for row := n.FirstChild(); row != nil; row = row.NextSibling() {
 		var cells []string
 		for i, cell := 0, row.FirstChild(); cell != nil; i, cell = i+1, cell.NextSibling() {
@@ -279,11 +287,13 @@ type style struct {
 	link                                  string // an OSC 8 target, if any
 }
 
-// span is a run of text in one style, or a hard line break.
+// span is a run of text in one style, a hard line break, or lines that
+// stand on their own, such as an image's.
 type span struct {
-	text string
-	st   style
-	br   bool
+	text  string
+	st    style
+	br    bool
+	lines []string
 }
 
 // inlines collects n's inline children as spans in style st.
@@ -379,11 +389,16 @@ func safeURL(url string) string {
 	return ""
 }
 
-// image is the body's next image, shown as a 🖼 placeholder with its alt
-// text.
+// image is the body's next image: its slot's lines, else a 🖼 placeholder
+// with its alt text.
 func (r *renderer) image(im Image, st style) span {
 	im.Alt = strings.TrimSpace(im.Alt)
 	r.images = append(r.images, im)
+	if r.slot != nil && r.width > 0 {
+		if lines := r.slot(len(r.images)-1, r.width); len(lines) > 0 {
+			return span{lines: lines}
+		}
+	}
 	alt := im.Alt
 	if alt == "" {
 		alt = "image"
@@ -450,14 +465,16 @@ func (r *renderer) reduceHTML(s string, st style) []span {
 	return out
 }
 
-// frag is a run of a word in one style.
+// frag is a run of a word in one style, or lines that stand on their own.
 type frag struct {
-	text string
-	st   style
+	text  string
+	st    style
+	lines []string
 }
 
 // wrap fills lines up to width with the spans' words, breaking at spaces
 // and hard breaks, and breaking a word only if it is wider than a line.
+// Lines that stand on their own break the text before and after them.
 func wrap(spans []span, width int) []string {
 	var lines []string
 	var line []frag
@@ -471,13 +488,20 @@ func wrap(spans []span, width int) []string {
 			emit()
 			continue
 		}
+		if wd[0].lines != nil {
+			if w > 0 {
+				emit()
+			}
+			lines = append(lines, wd[0].lines...)
+			continue
+		}
 		ww := widthOf(wd)
 		if w > 0 && w+1+ww <= width {
 			sp := style{}
 			if last := line[len(line)-1].st; last == wd[0].st {
 				sp = last
 			}
-			line = append(append(line, frag{" ", sp}), wd...)
+			line = append(append(line, frag{text: " ", st: sp}), wd...)
 			w += 1 + ww
 			continue
 		}
@@ -500,7 +524,8 @@ func wrap(spans []span, width int) []string {
 }
 
 // words splits spans into words at spaces, keeping each fragment's style. A
-// nil word is a hard line break.
+// nil word is a hard line break, and lines that stand on their own are a
+// word alone.
 func words(spans []span) [][]frag {
 	var out [][]frag
 	var cur []frag
@@ -511,9 +536,14 @@ func words(spans []span) [][]frag {
 		}
 	}
 	for _, s := range spans {
-		if s.br {
+		switch {
+		case s.br:
 			flush()
 			out = append(out, nil)
+			continue
+		case s.lines != nil:
+			flush()
+			out = append(out, []frag{{lines: s.lines}})
 			continue
 		}
 		for i, part := range strings.Split(s.text, " ") {
@@ -521,7 +551,7 @@ func words(spans []span) [][]frag {
 				flush()
 			}
 			if part != "" {
-				cur = append(cur, frag{part, s.st})
+				cur = append(cur, frag{text: part, st: s.st})
 			}
 		}
 	}
@@ -552,9 +582,9 @@ func cut(wd []frag, width int) (head, tail []frag) {
 			h = string([]rune(f.text)[:1])
 		}
 		if h != "" {
-			head = append(head, frag{h, f.st})
+			head = append(head, frag{text: h, st: f.st})
 		}
-		tail = append([]frag{{f.text[len(h):], f.st}}, wd[i+1:]...)
+		tail = append([]frag{{text: f.text[len(h):], st: f.st}}, wd[i+1:]...)
 		return head, tail
 	}
 	return head, nil

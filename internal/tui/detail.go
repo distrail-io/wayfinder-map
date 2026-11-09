@@ -104,7 +104,7 @@ func (m Model) fetched(msg issueMsg) Model {
 
 func (m Model) renderBody() Model {
 	if m.detail.issue != nil {
-		m.detail.body = markdown.Render(m.detail.issue.Body, m.cols)
+		m.detail.body = markdown.Render(m.detail.issue.Body, m.cols, nil)
 	}
 	return m
 }
