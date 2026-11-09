@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/distrail-io/wayfinder-map/compare/v0.4.0...v0.5.0) (2026-11-09)
+
+
+### Features
+
+* detail view: explore a ticket with its body, mini-map, images and relationships ([#29](https://github.com/distrail-io/wayfinder-map/issues/29)) ([25728bd](https://github.com/distrail-io/wayfinder-map/commit/25728bdae188a926144d4ce8fd40192f76773828))
+
+
+### Bug Fixes
+
+* focus the Wayfinder pane when the Herdr action opens it ([#23](https://github.com/distrail-io/wayfinder-map/issues/23)) ([36c5172](https://github.com/distrail-io/wayfinder-map/commit/36c517239f0b06f7818df5f5a881a81de74777f7)), closes [#22](https://github.com/distrail-io/wayfinder-map/issues/22)
+
 ## [0.4.0](https://github.com/distrail-io/wayfinder-map/compare/v0.3.0...v0.4.0) (2026-11-05)
 
 
