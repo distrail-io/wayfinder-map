@@ -1,0 +1,95 @@
+package tui
+
+import (
+	"slices"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/distrail-io/wayfinder-map/internal/draw"
+	"github.com/distrail-io/wayfinder-map/internal/layout"
+	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
+)
+
+// wheelLines is how far one notch of the wheel scrolls the detail view.
+const wheelLines = 3
+
+// click opens the ticket or related issue under cell (x, y). A click on
+// anything else does nothing.
+func (m Model) click(x, y int) (tea.Model, tea.Cmd) {
+	switch {
+	case m.view == detailView:
+		l := m.detailLayout()
+		i := clampScroll(m.detail.scroll, len(l.rows), m.detailHeight()) + y
+		if y >= m.detailHeight() || i >= len(l.rows) {
+			break
+		}
+		target := l.rows[i].target
+		if mi := l.mini; mi != nil && i >= l.miniAt && i < l.miniAt+mi.rows {
+			target = l.targetOf(m.hit(mi.mp, mi.res, m.transform(mi), x, i-l.miniAt))
+		}
+		if target >= 0 {
+			return m.recentre(append(slices.Clip(m.detail.stack), l.targets[target]))
+		}
+	case m.view == mapView && m.shown != nil && y < m.graphRows():
+		n := 0
+		if m.cfg.List {
+			_, numbers := m.listRows()
+			n = numbers[y]
+		} else {
+			n = m.ticketAt(x, y)
+		}
+		if n != 0 {
+			m.sel = n
+			return m.openDetail(m.onMap(n))
+		}
+	}
+	return m, nil
+}
+
+// ticketAt is the ticket drawn under cell (x, y) of the graph area, or 0.
+func (m Model) ticketAt(x, y int) int {
+	return m.hit(m.shown, m.res(), draw.Fit(m.res(), m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale()), x, y)
+}
+
+// hit is the ticket of mp under cell (x, y) of an image of its layout res,
+// or 0. It places the boxes with tr, as Render draws them; a compact
+// ticket is the circle, not the square around it.
+func (m Model) hit(mp *wayfinder.Map, res layout.Result, tr draw.Transform, x, y int) int {
+	px, py := (float64(x)+0.5)*float64(m.cellW), (float64(y)+0.5)*float64(m.cellH)
+	for _, t := range mp.Tickets {
+		b := tr.Rect(res.Boxes[t.Number])
+		if m.look == draw.Compact {
+			r := b.W / 2
+			if dx, dy := px-(b.X+r), py-(b.Y+b.H/2); dx*dx+dy*dy <= r*r {
+				return t.Number
+			}
+		} else if px >= b.X && px < b.X+b.W && py >= b.Y && py < b.Y+b.H {
+			return t.Number
+		}
+	}
+	return 0
+}
+
+// wheel scrolls the detail view, or moves the picker's cursor.
+func (m Model) wheel(b tea.MouseButton) (tea.Model, tea.Cmd) {
+	up := b == tea.MouseWheelUp
+	if !up && b != tea.MouseWheelDown {
+		return m, nil
+	}
+	switch m.view {
+	case detailView:
+		rows := m.detailLayout().rows
+		if up {
+			m.detail.scroll -= wheelLines
+		} else {
+			m.detail.scroll += wheelLines
+		}
+		m.detail.scroll = clampScroll(m.detail.scroll, len(rows), m.detailHeight())
+	case pickerView:
+		if up {
+			return m.pickerKey("up")
+		}
+		return m.pickerKey("down")
+	}
+	return m, nil
+}

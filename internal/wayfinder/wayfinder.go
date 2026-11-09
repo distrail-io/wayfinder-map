@@ -37,20 +37,25 @@ const (
 	NoType    Type = "?"
 )
 
-// Blocker is a ticket that another is blocked by; it may live in another repo.
-type Blocker struct {
+// IssueRef names an issue, which may live in another repo than the map's.
+type IssueRef struct {
 	Repo   string
 	Number int
-	Closed bool
 }
 
-// Ref names the blocker as seen from a map in mapRepo: #N, or owner/repo#N
-// when it lives in another repo.
-func (b Blocker) Ref(mapRepo string) string {
-	if b.Repo != mapRepo {
-		return fmt.Sprintf("%s#%d", b.Repo, b.Number)
+// Ref names the issue as seen from repo: #N, or owner/repo#N when it lives
+// in another repo.
+func (r IssueRef) Ref(repo string) string {
+	if r.Repo != repo {
+		return fmt.Sprintf("%s#%d", r.Repo, r.Number)
 	}
-	return fmt.Sprintf("#%d", b.Number)
+	return fmt.Sprintf("#%d", r.Number)
+}
+
+// Blocker is a ticket that another is blocked by; it may live in another repo.
+type Blocker struct {
+	IssueRef
+	Closed bool
 }
 
 type Ticket struct {
@@ -93,6 +98,33 @@ func (m *Map) Blocks(n int) []int {
 	return out
 }
 
+// MiniMap is the map filtered to ticket n and its direct neighbours on the
+// map, the tickets it is blocked by and those it blocks, with every edge
+// between them. It shares its tickets with m, and has no warnings.
+func (m *Map) MiniMap(n int) *Map {
+	in := map[int]bool{n: true}
+	for _, e := range m.Edges {
+		if e.To == n {
+			in[e.From] = true
+		}
+		if e.From == n {
+			in[e.To] = true
+		}
+	}
+	mini := &Map{Repo: m.Repo, Number: m.Number, Title: m.Title, Closed: m.Closed}
+	for _, t := range m.Tickets {
+		if in[t.Number] {
+			mini.Tickets = append(mini.Tickets, t)
+		}
+	}
+	for _, e := range m.Edges {
+		if in[e.From] && in[e.To] {
+			mini.Edges = append(mini.Edges, e)
+		}
+	}
+	return mini
+}
+
 // Ticket returns the map's ticket with this number, or nil.
 func (m *Map) Ticket(n int) *Ticket {
 	i, ok := slices.BinarySearchFunc(m.Tickets, n, func(t *Ticket, n int) int { return t.Number - n })
@@ -103,6 +135,28 @@ func (m *Map) Ticket(n int) *Ticket {
 }
 
 type nodes[T any] struct{ Nodes []T }
+
+type rawLabels nodes[struct{ Name string }]
+
+// names are the labels' names, sanitised.
+func (l rawLabels) names() []string {
+	var out []string
+	for _, n := range l.Nodes {
+		out = append(out, Sanitize(n.Name))
+	}
+	return out
+}
+
+type rawLogins nodes[struct{ Login string }]
+
+// logins are the users' logins, sanitised.
+func (l rawLogins) logins() []string {
+	var out []string
+	for _, n := range l.Nodes {
+		out = append(out, Sanitize(n.Login))
+	}
+	return out
+}
 
 type pageInfo struct{ HasNextPage bool }
 
@@ -139,8 +193,8 @@ type rawMap struct {
 						Number    int
 						Title     string
 						State     string
-						Labels    nodes[struct{ Name string }]
-						Assignees nodes[struct{ Login string }]
+						Labels    rawLabels
+						Assignees rawLogins
 						BlockedBy struct {
 							PageInfo pageInfo
 							Nodes    []struct {
@@ -173,24 +227,13 @@ func Parse(raw []byte) (*Map, error) {
 		return nil, ErrNotFound
 	}
 	is := repo.Issue
-	m := &Map{Repo: repo.NameWithOwner, Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED"}
+	m := &Map{Repo: Sanitize(repo.NameWithOwner), Number: is.Number, Title: Sanitize(is.Title), Closed: is.State == "CLOSED"}
 	var moreBlockers []int
 	for _, n := range is.SubIssues.Nodes {
-		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Type: NoType, Closed: n.State == "CLOSED"}
-		for _, l := range n.Labels.Nodes {
-			name, ok := strings.CutPrefix(l.Name, "wayfinder:")
-			switch typ := Type(name); typ {
-			case Research, Prototype, Grilling, Task:
-				if ok {
-					t.Type = typ
-				}
-			}
-		}
-		for _, a := range n.Assignees.Nodes {
-			t.Assignees = append(t.Assignees, a.Login)
-		}
+		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Closed: n.State == "CLOSED"}
+		t.Type, t.Assignees = typeOf(n.Labels.names()), n.Assignees.logins()
 		for _, b := range n.BlockedBy.Nodes {
-			t.Blockers = append(t.Blockers, Blocker{b.Repository.NameWithOwner, b.Number, b.State == "CLOSED"})
+			t.Blockers = append(t.Blockers, Blocker{IssueRef{Sanitize(b.Repository.NameWithOwner), b.Number}, b.State == "CLOSED"})
 		}
 		if n.BlockedBy.PageInfo.HasNextPage {
 			moreBlockers = append(moreBlockers, n.Number)
@@ -356,7 +399,7 @@ func ParseList(raw []byte) (List, error) {
 	if repo == nil {
 		return List{}, ErrNotFound
 	}
-	l := List{Repo: repo.NameWithOwner, More: repo.Issues.TotalCount > len(repo.Issues.Nodes)}
+	l := List{Repo: Sanitize(repo.NameWithOwner), More: repo.Issues.TotalCount > len(repo.Issues.Nodes)}
 	for _, n := range repo.Issues.Nodes {
 		s := Summary{Number: n.Number, Title: Sanitize(n.Title), Total: n.SubIssuesSummary.Total, Done: n.SubIssuesSummary.Completed}
 		for _, t := range n.SubIssues.Nodes {
@@ -372,6 +415,21 @@ func ParseList(raw []byte) (List, error) {
 		l.Maps = append(l.Maps, s)
 	}
 	return l, nil
+}
+
+// typeOf is the type the last wayfinder:* type label names, else NoType.
+func typeOf(labels []string) Type {
+	t := NoType
+	for _, l := range labels {
+		name, ok := strings.CutPrefix(l, "wayfinder:")
+		switch typ := Type(name); typ {
+		case Research, Prototype, Grilling, Task:
+			if ok {
+				t = typ
+			}
+		}
+	}
+	return t
 }
 
 func classify(t *Ticket) State {
@@ -392,10 +450,11 @@ func stateOf(closed, assigned, openBlocker bool) State {
 	return Frontier
 }
 
-// Sanitize makes an untrusted issue title safe to show: it removes escape
-// sequences whole, then drops controls, format characters (bidi overrides,
-// zero-width and invisible tag characters), line and paragraph separators,
-// and invalid UTF-8.
+// Sanitize makes an untrusted string from GitHub, such as a title, a repo
+// name or a login, safe to show: it removes escape sequences whole, then
+// drops controls, format characters (bidi overrides, zero-width and
+// invisible tag characters), line and paragraph separators, and invalid
+// UTF-8.
 func Sanitize(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {

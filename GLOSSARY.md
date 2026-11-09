@@ -45,3 +45,21 @@ The list of a repo's open maps that you choose from when no map is named.
 **Look**:
 How tickets are drawn in the graph: as **cards** (box with title) or **compact** (circle with type icon and number).
 _Avoid_: Theme, style, mode
+
+**Strip**:
+The rows under the map: the legend and key hints, then the selected ticket's title and facts.
+
+**Selection**:
+The highlighted ticket on the map, or the cursor on a related issue in the detail view.
+_Avoid_: Focus
+
+**Detail view**:
+The full-pane view of one issue: its header, relationships, sub-issues and body.
+_Avoid_: Panel, popup, modal
+
+**Focus**:
+The issue the detail view is showing.
+
+**Mini-map**:
+The map filtered to the focus ticket and its direct neighbours, drawn like the map.
+_Avoid_: Neighbourhood, subgraph

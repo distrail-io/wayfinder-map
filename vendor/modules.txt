@@ -42,15 +42,32 @@ github.com/rivo/uniseg
 # github.com/xo/terminfo v1.0.0
 ## explicit; go 1.19
 github.com/xo/terminfo
+# github.com/yuin/goldmark v1.8.7
+## explicit; go 1.22
+github.com/yuin/goldmark
+github.com/yuin/goldmark/ast
+github.com/yuin/goldmark/extension
+github.com/yuin/goldmark/extension/ast
+github.com/yuin/goldmark/parser
+github.com/yuin/goldmark/renderer
+github.com/yuin/goldmark/renderer/html
+github.com/yuin/goldmark/text
+github.com/yuin/goldmark/util
 # golang.org/x/image v0.47.0
 ## explicit; go 1.26.0
+golang.org/x/image/draw
 golang.org/x/image/font
 golang.org/x/image/font/gofont/gobold
 golang.org/x/image/font/gofont/goregular
 golang.org/x/image/font/opentype
 golang.org/x/image/font/sfnt
+golang.org/x/image/math/f64
 golang.org/x/image/math/fixed
+golang.org/x/image/riff
 golang.org/x/image/vector
+golang.org/x/image/vp8
+golang.org/x/image/vp8l
+golang.org/x/image/webp
 # golang.org/x/sync v0.24.0
 ## explicit; go 1.26.0
 golang.org/x/sync/errgroup

@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,7 +36,7 @@ func TestCardsTakeTheirStateColour(t *testing.T) {
 	m := load(t, "edge-cases")
 	res := layout.Layered(draw.Graph(m, draw.Cards), layout.LR)
 	// At scale 1 the image matches layout units exactly.
-	img := draw.Render(m, res, draw.Cards, 0, int(res.W), int(res.H), 1)
+	img := draw.Render(m, res, draw.Cards, 0, 0, int(res.W), int(res.H), 1)
 	want := map[wayfinder.State]color.RGBA{
 		wayfinder.Done:     {0x4d, 0x55, 0x60, 0xff},
 		wayfinder.Claimed:  {0x2f, 0x6f, 0xde, 0xff},
@@ -57,7 +58,7 @@ func TestCardsTakeTheirStateColour(t *testing.T) {
 func TestCompactTicketsAreCirclesInTheirStateColour(t *testing.T) {
 	m := load(t, "edge-cases")
 	res := layout.Layered(draw.Graph(m, draw.Compact), layout.LR)
-	img := draw.Render(m, res, draw.Compact, 0, int(res.W), int(res.H), 1)
+	img := draw.Render(m, res, draw.Compact, 0, 0, int(res.W), int(res.H), 1)
 	for _, tk := range m.Tickets {
 		b := res.Boxes[tk.Number]
 		if b.W != b.H || b.W >= 100 {
@@ -77,7 +78,7 @@ func TestCompactTicketsAreCirclesInTheirStateColour(t *testing.T) {
 func TestSelectedTicketHasAYellowRing(t *testing.T) {
 	m := load(t, "214")
 	res := layout.Layered(draw.Graph(m, draw.Cards), layout.LR)
-	img := draw.Render(m, res, draw.Cards, 218, int(res.W), int(res.H), 1)
+	img := draw.Render(m, res, draw.Cards, 218, 0, int(res.W), int(res.H), 1)
 	yellow := color.RGBA{0xff, 0xd3, 0x3d, 0xff}
 	for _, n := range []int{217, 218} {
 		b := res.Boxes[n]
@@ -85,6 +86,33 @@ func TestSelectedTicketHasAYellowRing(t *testing.T) {
 		got := img.RGBAAt(int(b.X)-2, int(b.Y+b.H/2))
 		if (got == yellow) != (n == 218) {
 			t.Errorf("#%d: pixel beside the card is %v; selected is #218", n, got)
+		}
+	}
+}
+
+// The focus ticket has a double border in its own colour, a style the map
+// never uses, so it isn't mistaken for the selection's yellow ring.
+func TestTheFocusTicketHasADoubleBorder(t *testing.T) {
+	m := load(t, "214").MiniMap(220)
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := layout.Layered(draw.Graph(m, look), layout.LR)
+		img := draw.Render(m, res, look, 218, 220, int(res.W), int(res.H), 1)
+		for _, tk := range m.Tickets {
+			b := res.Boxes[tk.Number]
+			y := int(b.Y + b.H/2)
+			// Beside the card: the two bands, with a gap between. Boxes
+			// needn't sit on whole pixels, so the edges blur a little.
+			inner, gap, outer := img.RGBAAt(int(b.X)-2, y), img.RGBAAt(int(b.X)-4, y), img.RGBAAt(int(b.X)-6, y)
+			fill := draw.FillOf(tk.State)
+			focused := near(inner, fill) && gap.A < tolerance && near(outer, fill)
+			if focused != (tk.Number == 220) {
+				t.Errorf("%v #%d: beside it %v, %v, %v; focus is #220", look, tk.Number, inner, gap, outer)
+			}
+		}
+		// The selection keeps its ring.
+		b := res.Boxes[218]
+		if got := img.RGBAAt(int(b.X)-2, int(b.Y+b.H/2)); got != (color.RGBA{0xff, 0xd3, 0x3d, 0xff}) {
+			t.Errorf("%v: the selection #218 has no ring: %v", look, got)
 		}
 	}
 }
@@ -117,8 +145,22 @@ func goldenMap(t *testing.T, name string, look draw.Look, dir layout.Dir) {
 		}
 	}
 	// A 160×36-cell pane of 9×18-pixel cells.
-	img := draw.Render(m, res, look, sel, 1440, 648, 1.25)
+	img := draw.Render(m, res, look, sel, 0, 1440, 648, 1.25)
 	golden(t, fmt.Sprintf("testdata/map-%s-%s-%s.png", name, look, dir), img)
+}
+
+// A mini-map: #220 in focus with its neighbours, and the edge between two
+// of its blockers, at the map's full scale, with the cursor on #218.
+func TestMiniMapGoldens(t *testing.T) {
+	m := load(t, "214").MiniMap(220)
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		t.Run(look.String(), func(t *testing.T) {
+			res := layout.Layered(draw.Graph(m, look), layout.LR)
+			const s = 1.25
+			img := draw.Render(m, res, look, 218, 220, int(math.Ceil(res.W*s)), int(math.Ceil(res.H*s)), s)
+			golden(t, fmt.Sprintf("testdata/mini-map-214-220-%s.png", look), img)
+		})
+	}
 }
 
 func golden(t *testing.T, path string, got *image.RGBA) {
@@ -172,6 +214,11 @@ func golden(t *testing.T, path string, got *image.RGBA) {
 		}
 		t.Errorf("%d pixels differ from %s, first at %v; got %s", bad, path, first, out)
 	}
+}
+
+// near reports whether a is b to within the golden tolerance.
+func near(a, b color.RGBA) bool {
+	return diff(a.R, b.R) <= tolerance && diff(a.G, b.G) <= tolerance && diff(a.B, b.B) <= tolerance && diff(a.A, b.A) <= tolerance
 }
 
 func diff(a, b uint8) int {

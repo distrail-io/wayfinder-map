@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,6 +22,10 @@ import (
 const (
 	contractRepo = "distrail-io/wayfinder-map"
 	contractMap  = 1 // "wayfinder-map v1: terminal graph viewer"
+
+	// The detail view's spec ticket: a sub-issue of #25 that blocks #27.
+	contractIssue       = 26
+	contractIssueParent = 25
 )
 
 func TestContract(t *testing.T) {
@@ -60,7 +65,39 @@ func TestContract(t *testing.T) {
 		}
 	})
 
-	for name, query := range map[string]string{"ListQuery": ListQuery, "MapQuery": MapQuery} {
+	t.Run("IssueQuery runs and parses", func(t *testing.T) {
+		raw, err := g.LoadIssue(ctx, contractRepo, contractIssue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		is, err := wayfinder.ParseIssue(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if is.Repo != contractRepo || is.Number != contractIssue || is.Title == "" || is.Body == "" || is.BodyHTML == "" {
+			t.Errorf("issue = %s#%d %q, body %d bytes, body HTML %d bytes", is.Repo, is.Number, is.Title, len(is.Body), len(is.BodyHTML))
+		}
+		if is.Parent == nil || is.Parent.Number != contractIssueParent || is.Parent.Title == "" {
+			t.Errorf("issue #%d's parent = %+v, want #%d", contractIssue, is.Parent, contractIssueParent)
+		}
+		if len(is.Blocking) == 0 || is.Blocking[0].Title == "" || is.Blocking[0].Repo != contractRepo {
+			t.Errorf("issue #%d blocks %+v, want some with titles", contractIssue, is.Blocking)
+		}
+		// The map issue has sub-issues, the tickets, with their labels.
+		raw, err = g.LoadIssue(ctx, contractRepo, contractMap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := wayfinder.ParseIssue(raw)
+		if err != nil || len(m.SubIssues) == 0 || m.SubTotal == 0 {
+			t.Fatalf("map issue #%d: %d sub-issues of %d, err %v", contractMap, len(m.SubIssues), m.SubTotal, err)
+		}
+		if !slices.ContainsFunc(m.SubIssues, func(r wayfinder.Related) bool { return r.Type != wayfinder.NoType }) {
+			t.Errorf("map issue #%d's sub-issues have no wayfinder:* type: %+v", contractMap, m.SubIssues)
+		}
+	})
+
+	for name, query := range map[string]string{"ListQuery": ListQuery, "MapQuery": MapQuery, "IssueQuery": IssueQuery} {
 		t.Run(name+" uses no deprecated field", func(t *testing.T) {
 			s := &schema{t: t, types: map[string]map[string]field{}}
 			w := &walker{t: t, toks: tokens(query), s: s}

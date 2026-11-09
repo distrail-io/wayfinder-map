@@ -1,7 +1,9 @@
 // Package tui is the Bubble Tea app. A picker lists the repo's open maps; a
 // map is shown as a Kitty-graphics image, or as a list grouped by state,
-// with the selected ticket's details and a status line below. Both refresh
-// on an interval, and the map is redrawn only when it changes.
+// with the selected ticket in a strip and a status line below; the detail
+// view shows one issue in full, with its relationships, drawn as a mini-map
+// where the terminal shows images inline, and its body. All three
+// refresh on an interval, and the map is redrawn only when it changes.
 package tui
 
 import (
@@ -21,9 +23,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/github"
+	"github.com/distrail-io/wayfinder-map/internal/images"
 	"github.com/distrail-io/wayfinder-map/internal/kitty"
 	"github.com/distrail-io/wayfinder-map/internal/layout"
 	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
@@ -51,6 +55,17 @@ type Config struct {
 	After func(d time.Duration, msg tea.Msg) tea.Cmd
 	// Open shows a URL in the browser. Nil runs the platform's opener.
 	Open func(url string) error
+
+	// NoMouse leaves the mouse to the terminal, for its own text selection.
+	NoMouse bool
+	// Images shows the detail view's mini-map and the body's images inline,
+	// with Kitty Unicode placeholders. Without it, or in list mode, the
+	// detail view lists the focus ticket's blockers and what it blocks as
+	// text, and the body's images are placeholders.
+	Images bool
+	// FetchImage gets an image in a body from one of GitHub's image hosts.
+	// Nil fetches it over the network, with no credentials.
+	FetchImage func(url string) ([]byte, error)
 }
 
 const DefaultInterval = 30 * time.Second
@@ -58,10 +73,11 @@ const DefaultInterval = 30 * time.Second
 type Model struct {
 	cfg Config
 
-	// The picker, shown while picking.
-	picking bool
-	list    *wayfinder.List // nil until the first listing arrives
-	pick    int             // the number of the map under the cursor
+	view view
+
+	// The picker.
+	list *wayfinder.List // nil until the first listing arrives
+	pick int             // the number of the map under the cursor
 
 	number     int // the map shown, or being loaded
 	shown      *wayfinder.Map
@@ -77,7 +93,20 @@ type Model struct {
 	cellH      int
 	gen        int // the latest scheduled draw
 	pollGen    int // the latest scheduled poll
+
+	detail   detail             // the detail view, while it is shown
+	pictures map[string]picture // the body images fetched, by asset
 }
+
+// view is what fills the pane: the picker, a map, or the detail view of
+// one issue.
+type view int
+
+const (
+	pickerView view = iota
+	mapView
+	detailView
+)
 
 type (
 	listedMsg struct {
@@ -97,11 +126,12 @@ type (
 // drawDelay lets Bubble Tea paint its frame before the image goes over it.
 const drawDelay = 60 * time.Millisecond
 
-// The details area below the graph: a legend, then the selected ticket's
-// title, type and state, blockers and what it blocks. Then a row for each
-// of the map's warnings, up to maxWarningRows, and the status line last.
+// The strip below the graph: the legend and key hints, then the selected
+// ticket's title over two rows. Then a row for each of the map's warnings,
+// up to maxWarningRows, and the status line last. The strip's height is
+// fixed, so a long title never moves the graph.
 const (
-	detailRows     = 5
+	stripRows      = 3
 	maxWarningRows = 6
 	statusRows     = 1
 )
@@ -121,7 +151,14 @@ func New(cfg Config) Model {
 	if cfg.Open == nil {
 		cfg.Open = openURL
 	}
-	return Model{cfg: cfg, number: cfg.Number, picking: cfg.Number == 0, loading: true,
+	if cfg.FetchImage == nil {
+		cfg.FetchImage = images.Client{}.Fetch
+	}
+	v := mapView
+	if cfg.Number == 0 {
+		v = pickerView
+	}
+	return Model{cfg: cfg, number: cfg.Number, view: v, loading: true,
 		look: cfg.Look, dir: cfg.Dir, autoDir: cfg.AutoDir}
 }
 
@@ -173,14 +210,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case listedMsg:
 		// A listing that arrives after a map was picked is dropped.
-		if m.picking {
+		if m.view == pickerView {
 			return m.listed(msg)
 		}
 	case loadedMsg:
 		// So is a map that arrives after going back to the picker.
-		if !m.picking && msg.number == m.number {
+		if m.view != pickerView && msg.number == m.number {
 			return m.loaded(msg)
 		}
+	case issueMsg:
+		// An issue that arrives after moving on is dropped.
+		if m.view == detailView && msg.ref == m.focus() {
+			return m.fetched(msg)
+		}
+	case pictureMsg:
+		return m.pictured(msg)
 	case pollMsg:
 		if int(msg) == m.pollGen && !m.loading {
 			return m.fetch()
@@ -192,9 +236,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.cols, m.rows = msg.Width, msg.Height
 		m.cellW, m.cellH = m.cfg.CellSize(m.cols, m.rows)
-		return m.fit().redraw()
+		return m.renderBody().fit().redraw()
 	case drawMsg:
-		if int(msg) != m.gen || m.cfg.List || m.shown == nil {
+		if int(msg) != m.gen || m.shown == nil {
+			break
+		}
+		if m.view == detailView {
+			m, send := m.sendImages()
+			return m, tea.Batch(m.miniMapImage(), send)
+		}
+		if m.cfg.List || m.view != mapView {
 			break
 		}
 		if m.cols <= 0 || m.graphRows() <= 0 {
@@ -204,6 +255,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Raw(m.image())
 	case tea.KeyPressMsg:
 		return m.key(msg.String())
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			return m.click(msg.X, msg.Y)
+		}
+	case tea.MouseWheelMsg:
+		return m.wheel(msg.Button)
 	}
 	return m, nil
 }
@@ -292,11 +349,15 @@ func (m Model) schedulePoll() (Model, tea.Cmd) {
 	return m, m.cfg.After(m.cfg.Interval, pollMsg(m.pollGen))
 }
 
-// fetch lists the maps while picking, else loads the map.
+// fetch lists the maps in the picker, else loads the map, and the focus
+// issue in the detail view.
 func (m Model) fetch() (Model, tea.Cmd) {
 	m.loading = true
-	if m.picking {
+	switch m.view {
+	case pickerView:
 		return m, m.listMaps
+	case detailView:
+		return m, tea.Batch(m.load, m.loadIssue())
 	}
 	return m, m.load
 }
@@ -304,7 +365,7 @@ func (m Model) fetch() (Model, tea.Cmd) {
 // openMap leaves the picker for map n. Polls scheduled for the picker are
 // superseded.
 func (m Model) openMap(n int) (tea.Model, tea.Cmd) {
-	m.picking, m.number, m.shown, m.sel, m.err = false, n, nil, 0, nil
+	m.view, m.number, m.shown, m.sel, m.err = mapView, n, nil, 0, nil
 	m.pollGen++
 	return m.fetch()
 }
@@ -312,7 +373,7 @@ func (m Model) openMap(n int) (tea.Model, tea.Cmd) {
 // back leaves the map for the picker, with its cursor on the map, and
 // clears the image.
 func (m Model) back() (tea.Model, tea.Cmd) {
-	m.picking, m.pick, m.number, m.shown, m.sel, m.err = true, m.number, 0, nil, 0, nil
+	m.view, m.pick, m.number, m.shown, m.sel, m.err = pickerView, m.number, 0, nil, 0, nil
 	m.pollGen++
 	m.gen++
 	m, fetch := m.fetch()
@@ -344,24 +405,36 @@ func firstSelection(mp *wayfinder.Map) int {
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "q", "ctrl+c":
-		return m, tea.Sequence(m.clear(), tea.Quit)
+		return m, tea.Sequence(m.clear(), m.deleteImages(), tea.Quit)
 	case "r":
 		if m.loading {
 			return m, nil
 		}
 		return m.fetch()
 	}
-	if m.picking {
+	switch m.view {
+	case pickerView:
 		return m.pickerKey(k)
+	case detailView:
+		return m.detailKey(k)
 	}
 	if k == "b" || k == "esc" {
 		return m.back()
 	}
-	if m.shown == nil || m.sel == 0 {
+	if m.shown == nil {
 		return m, nil
 	}
-	if k == "o" || k == "enter" {
+	if k == "m" {
+		return m.openDetail(m.onMap(m.shown.Number))
+	}
+	if m.sel == 0 {
+		return m, nil
+	}
+	switch k {
+	case "o":
 		return m, m.open(m.shown.Repo, m.sel)
+	case "enter", "space":
+		return m.openDetail(m.onMap(m.sel))
 	}
 	if m.cfg.List {
 		return m.listKey(k)
@@ -369,10 +442,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	sel := m.sel
 	switch k {
 	case "c":
-		m.look = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}[m.look]
+		m.look = otherLook[m.look]
 		return m.relayout().redraw()
 	case "d":
-		m.dir, m.autoDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[m.dir], false
+		m.dir, m.autoDir = otherDir[m.dir], false
 		return m.redraw()
 	case "tab", "shift+tab":
 		sel = m.cycle(k == "tab")
@@ -494,7 +567,7 @@ func (m Model) redraw() (Model, tea.Cmd) {
 	return m, m.cfg.After(drawDelay, drawMsg(m.gen))
 }
 
-func (m Model) graphRows() int { return m.rows - detailRows - len(m.warnings()) - statusRows }
+func (m Model) graphRows() int { return m.rows - stripRows - len(m.warnings()) - statusRows }
 
 // warnings returns a row for each of the map's warnings, folding any beyond
 // maxWarningRows into the last.
@@ -515,7 +588,7 @@ func (m Model) warnings() []string {
 }
 
 func (m Model) image() string {
-	img := draw.Render(m.shown, m.res(), m.look, m.sel, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
+	img := draw.Render(m.shown, m.res(), m.look, m.sel, 0, m.cols*m.cellW, m.graphRows()*m.cellH, m.maxScale())
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := enc.Encode(&buf, img); err != nil {
@@ -524,41 +597,61 @@ func (m Model) image() string {
 	return kitty.Place(buf.Bytes(), m.cols, m.graphRows())
 }
 
+// otherLook is the look c switches to.
+var otherLook = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}
+
+// otherDir is the direction d switches to.
+var otherDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}
+
+// newView is a full-screen view of s.
+func (m Model) newView(s string) tea.View {
+	v := tea.NewView(s)
+	v.AltScreen = true
+	if !m.cfg.NoMouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
+	return v
+}
+
 func (m Model) View() tea.View {
-	if m.picking {
-		return m.pickerView()
+	switch m.view {
+	case pickerView:
+		return m.picker()
+	case detailView:
+		return m.detailView()
 	}
 	var b strings.Builder
 	if m.cfg.List && m.shown != nil {
-		for _, line := range m.listRows() {
+		rows, _ := m.listRows()
+		for _, line := range rows {
 			b.WriteString(line + "\n")
 		}
 	} else {
 		b.WriteString(strings.Repeat("\n", max(0, m.graphRows())))
 	}
-	for _, line := range append(m.details(), m.warnings()...) {
+	for _, line := range append(m.strip(), m.warnings()...) {
 		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.status(), m.cols))
-	v := tea.NewView(b.String())
-	v.AltScreen = true
-	return v
+	return m.newView(b.String())
 }
 
 // listRows fills the graph area with the tickets grouped by state, a
-// heading over each group, scrolled so the selection is in view.
-func (m Model) listRows() []string {
+// heading over each group, scrolled so the selection is in view. It also
+// returns the ticket on each row, or 0 for a heading or blank.
+func (m Model) listRows() ([]string, []int) {
 	count := map[wayfinder.State]int{}
 	for _, t := range m.shown.Tickets {
 		count[t.State]++
 	}
 	var rows []string
+	var numbers []int
 	at := 0
 	ts := listOrder(m.shown)
 	for i, t := range ts {
 		if i == 0 || t.State != ts[i-1].State {
 			heading := truncate(fmt.Sprintf("%s (%d)", t.State, count[t.State]), m.cols-3)
-			rows = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m")
+			rows, numbers = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m"), append(numbers, 0)
 		}
 		row := fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title)
 		if t.Number == m.sel {
@@ -567,16 +660,18 @@ func (m Model) listRows() []string {
 		} else {
 			rows = append(rows, truncate("  "+row, m.cols))
 		}
+		numbers = append(numbers, t.Number)
 	}
 	fit := max(0, m.graphRows())
 	from := max(0, at-fit+1)
-	rows = rows[from:min(len(rows), from+fit)]
-	return append(rows, make([]string, fit-len(rows))...)
+	to := min(len(rows), from+fit)
+	rows, numbers = rows[from:to], numbers[from:to]
+	return append(rows, make([]string, fit-len(rows))...), append(numbers, make([]int, fit-len(numbers))...)
 }
 
-// pickerView is a header, a row per map with the cursor's in bold, a hint
+// picker is a header, a row per map with the cursor's in bold, a hint
 // if there are more maps than listed, and the status line at the bottom.
-func (m Model) pickerView() tea.View {
+func (m Model) picker() tea.View {
 	var rows, foot []string
 	header := "Open maps"
 	if m.list != nil {
@@ -608,9 +703,7 @@ func (m Model) pickerView() tea.View {
 		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.pickerStatus(), m.cols))
-	v := tea.NewView(b.String())
-	v.AltScreen = true
-	return v
+	return m.newView(b.String())
 }
 
 func (m Model) pickerStatus() string {
@@ -646,83 +739,113 @@ func (m Model) status() string {
 		count[wayfinder.Blocked], count[wayfinder.Done], m.shown.Title)
 }
 
-// details returns the detailRows lines below the graph.
-func (m Model) details() []string {
-	lines := make([]string, detailRows)
+// strip returns the stripRows lines below the graph.
+func (m Model) strip() []string {
+	lines := make([]string, stripRows)
 	if m.shown == nil {
 		return lines
 	}
-	lines[0] = m.legend()
+	lines[0] = m.hints()
 	if t := m.shown.Ticket(m.sel); t != nil {
-		lines[1] = "\x1b[1m" + truncate(fmt.Sprintf("#%d %s", t.Number, t.Title), m.cols) + "\x1b[0m"
-		meta := fmt.Sprintf("%s · %s · unassigned", t.Type, t.State)
-		switch who := strings.Join(t.Assignees, ", "); {
-		case t.State == wayfinder.Claimed:
-			meta = fmt.Sprintf("%s · claimed by %s", t.Type, who)
-		case who != "":
-			meta = fmt.Sprintf("%s · %s · assigned to %s", t.Type, t.State, who)
-		}
-		lines[2] = truncate(meta, m.cols)
-		var by []string
-		for _, b := range t.Blockers {
-			state := "open"
-			if b.Closed {
-				state = "closed"
-			}
-			by = append(by, fmt.Sprintf("%s (%s)", b.Ref(m.shown.Repo), state))
-		}
-		lines[3] = truncate("blocked by: "+orNone(by), m.cols)
-		var blocks []string
-		for _, n := range m.shown.Blocks(t.Number) {
-			blocks = append(blocks, fmt.Sprintf("#%d", n))
-		}
-		lines[4] = truncate("blocks: "+orNone(blocks), m.cols)
+		title := m.titleRows(t)
+		lines[1], lines[2] = title[0], title[1]
 	}
 	return lines
 }
 
-// legend shows what the colours and lines mean, then the keys, as far as
-// the pane is wide.
-func (m Model) legend() string {
-	var b strings.Builder
-	width := 0
-	add := func(styled string, w int) bool {
-		if width+w > m.cols {
-			return false
-		}
-		b.WriteString(styled)
-		width += w
-		return true
-	}
-	for _, s := range []wayfinder.State{wayfinder.Done, wayfinder.Claimed, wayfinder.Frontier, wayfinder.Blocked} {
-		name := s.String()
-		if !add(swatch(s)+" "+name+"  ", 2+1+len([]rune(name))+2) {
-			return b.String()
+// titleRows are the selected ticket's number and title, wrapped over two
+// rows, then its type, state, and counts of its open blockers and of the
+// tickets it blocks. A title too long for both rows is cut with … so that
+// the facts after it still show.
+func (m Model) titleRows(t *wayfinder.Ticket) [2]string {
+	open := 0
+	for _, b := range t.Blockers {
+		if !b.Closed {
+			open++
 		}
 	}
-	keys := []string{"┄ closed blocker  ", "←↑↓→ tab select · c look · d direction · o open · b back · r refresh · q quit"}
-	if m.cfg.List {
-		keys = []string{"↑↓ select · o open · b back · r refresh · q quit"}
+	title := fmt.Sprintf("#%d %s", t.Number, t.Title)
+	facts := fmt.Sprintf(" · %s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number)))
+	lines := strings.Split(ansi.Wrap(title+facts, m.cols, ""), "\n")
+	if len(lines) > 2 {
+		first, _, _ := strings.Cut(ansi.Wrap(title, m.cols, ""), "\n")
+		rest := strings.TrimLeft(strings.TrimPrefix(title, first), " ")
+		second := ansi.Truncate(rest+facts, m.cols, "…")
+		if room := m.cols - ansi.StringWidth(facts); room > 1 {
+			second = ansi.Truncate(rest, room, "…") + facts
+		}
+		lines = []string{first, second}
 	}
-	for _, s := range keys {
-		if !add(s, len([]rune(s))) {
+	lines = append(lines, "")
+	return [2]string{boldPrefix(lines[0], &title), boldPrefix(lines[1], &title)}
+}
+
+// boldPrefix bolds as much of line as is still the start of *title, and
+// moves *title past it, so the title shows bold across the rows it wraps
+// over and the facts after it don't.
+func boldPrefix(line string, title *string) string {
+	rest := strings.TrimLeft(*title, " ")
+	n := 0
+	for i, r := range line {
+		if !strings.HasPrefix(rest[i:], string(r)) {
 			break
 		}
+		n = i + len(string(r))
 	}
-	return b.String()
+	*title = rest[n:]
+	if n == 0 {
+		return line
+	}
+	return "\x1b[1m" + line[:n] + "\x1b[0m" + line[n:]
+}
+
+// hints shows what the colours and lines mean, then the keys, with the c
+// and d hints naming what they are set to. A narrow pane shortens the
+// legend to bare swatches first, then drops the other keys and the legend,
+// and cuts the c and d hints last.
+func (m Model) hints() string {
+	var names, swatches []string
+	for _, s := range []wayfinder.State{wayfinder.Done, wayfinder.Claimed, wayfinder.Frontier, wayfinder.Blocked} {
+		names = append(names, swatch(s)+" "+s.String())
+		swatches = append(swatches, swatch(s))
+	}
+	legends := []string{strings.Join(names, "  ") + "  ┄ closed blocker", strings.Join(swatches, " "), ""}
+	dir := m.dir.String()
+	if m.autoDir {
+		dir = "auto (" + dir + ")"
+	}
+	last := fmt.Sprintf("c look: %s · d dir: %s", m.look, dir)
+	keys := []string{"←↑↓→ tab select", "enter details", "o browser", "m map", "b back", "r refresh", "q quit"}
+	if m.cfg.List {
+		last, keys = "↑↓ select", keys[1:]
+	}
+	fits := func(s string) bool { return ansi.StringWidth(s) <= m.cols }
+	if all := legends[0] + "  " + last + " · " + strings.Join(keys, " · "); fits(all) {
+		return all
+	}
+	for _, legend := range legends[1:] {
+		row := last
+		if legend != "" {
+			row = legend + "  " + last
+		}
+		if !fits(row) {
+			continue
+		}
+		for _, k := range keys {
+			if !fits(row + " · " + k) {
+				break
+			}
+			row += " · " + k
+		}
+		return row
+	}
+	return ansi.Truncate(last, m.cols, "…")
 }
 
 // swatch is two cells in the state's colour.
 func swatch(s wayfinder.State) string {
 	c := draw.FillOf(s)
 	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B)
-}
-
-func orNone(xs []string) string {
-	if len(xs) == 0 {
-		return "—"
-	}
-	return strings.Join(xs, " · ")
 }
 
 func truncate(s string, n int) string {

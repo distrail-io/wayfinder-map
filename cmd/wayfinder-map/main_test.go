@@ -128,6 +128,61 @@ func TestMapForms(t *testing.T) {
 	}
 }
 
+// The mouse is on unless --no-mouse or its variable turns it off.
+func TestNoMouseTurnsMouseReportingOff(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		env     map[string]string
+		noMouse bool
+	}{
+		{nil, nil, false},
+		{[]string{"--no-mouse"}, nil, true},
+		{nil, map[string]string{"WAYFINDER_MAP_NO_MOUSE": "1"}, true},
+		{[]string{"--no-mouse=false"}, map[string]string{"WAYFINDER_MAP_NO_MOUSE": "1"}, false},
+	} {
+		o, err := parseOptions(c.args, env(c.env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := o.config(nil, env(nil), func() bool { return true }).NoMouse; got != c.noMouse {
+			t.Errorf("%q %v: NoMouse %v, want %v", c.args, c.env, got, c.noMouse)
+		}
+	}
+}
+
+// The detail view shows images inline where the map is drawn, unless
+// --no-images or its variable turns them off, or the terminal is WezTerm,
+// which answers the Kitty probe but can't show Unicode placeholders. The
+// terminal is asked once at most.
+func TestImagesUnlessTurnedOffOrWezTerm(t *testing.T) {
+	for _, c := range []struct {
+		args  []string
+		env   map[string]string
+		probe bool // what the probe finds
+		want  bool
+	}{
+		{nil, nil, true, true},
+		{nil, nil, false, false},
+		{nil, map[string]string{"TERM_PROGRAM": "WezTerm"}, true, false},
+		{nil, map[string]string{"TERM_PROGRAM": "ghostty"}, true, true},
+		{[]string{"--no-images"}, nil, true, false},
+		{nil, map[string]string{"WAYFINDER_MAP_NO_IMAGES": "1"}, true, false},
+		{[]string{"--no-images=false"}, map[string]string{"WAYFINDER_MAP_NO_IMAGES": "1"}, true, true},
+		{[]string{"--list"}, nil, true, false},
+		{[]string{"--list=false"}, nil, false, true},
+	} {
+		o, err := parseOptions(c.args, env(c.env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		probes := 0
+		cfg := o.config(nil, env(c.env), func() bool { probes++; return c.probe })
+		if cfg.Images != c.want || probes > 1 {
+			t.Errorf("%q %v, probe %v: images %v after %d probes; want %v", c.args, c.env, c.probe, cfg.Images, probes, c.want)
+		}
+	}
+}
+
 // Without --list or its variable, the terminal is asked whether it shows
 // Kitty graphics; set either way, it isn't.
 func TestListUnlessTheTerminalShowsImages(t *testing.T) {

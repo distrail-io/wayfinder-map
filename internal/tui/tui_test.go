@@ -23,6 +23,22 @@ type fakeSource struct {
 	err    error
 	loaded []int
 	lists  int
+
+	issues      map[string][]byte // by owner/repo#number
+	issueErr    error
+	issueLoaded []string
+}
+
+func (f *fakeSource) LoadIssue(_ context.Context, repo string, n int) ([]byte, error) {
+	ref := fmt.Sprintf("%s#%d", repo, n)
+	f.issueLoaded = append(f.issueLoaded, ref)
+	if f.issueErr != nil {
+		return nil, f.issueErr
+	}
+	if raw, ok := f.issues[ref]; ok {
+		return raw, nil
+	}
+	return []byte(`{"data":{"repository":{"nameWithOwner":"` + repo + `","issue":null}}}`), nil
 }
 
 func (f *fakeSource) LoadMap(_ context.Context, n int) ([]byte, error) {
@@ -121,6 +137,31 @@ func run(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
+// run is run, but while the app is holding it holds back what a command
+// that fetched an image produces.
+func (a *app) run(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	fetches := len(a.fetches)
+	msg := cmd()
+	if msg == nil {
+		return nil
+	}
+	if v := reflect.ValueOf(msg); v.Kind() == reflect.Slice && v.Type().Elem() == reflect.TypeFor[tea.Cmd]() {
+		var out []tea.Msg
+		for i := range v.Len() {
+			out = append(out, a.run(v.Index(i).Interface().(tea.Cmd))...)
+		}
+		return out
+	}
+	if a.holding && len(a.fetches) > fetches {
+		a.held = append(a.held, msg)
+		return nil
+	}
+	return []tea.Msg{msg}
+}
+
 type app struct {
 	t      *testing.T
 	m      tea.Model
@@ -128,6 +169,34 @@ type app struct {
 	clock  *clock
 	opened []string
 	quit   bool
+
+	// The fake image fetcher serves pics by URL and records each fetch.
+	// While holding, what a fetch produces is held back until release.
+	pics    map[string][]byte
+	fetches []string
+	holding bool
+	held    []tea.Msg
+}
+
+func (a *app) fetchImage(url string) ([]byte, error) {
+	a.fetches = append(a.fetches, url)
+	if data, ok := a.pics[url]; ok {
+		return data, nil
+	}
+	return nil, errors.New("not found")
+}
+
+// release delivers the messages held back since holding began.
+func (a *app) release() []string {
+	a.t.Helper()
+	a.holding = false
+	var raw []string
+	held := a.held
+	a.held = nil
+	for _, msg := range held {
+		raw = append(raw, a.send(msg)...)
+	}
+	return raw
 }
 
 func start(t *testing.T, src *fakeSource, number int) *app {
@@ -147,6 +216,9 @@ func startWith(t *testing.T, src *fakeSource, cfg tui.Config) *app {
 		a.opened = append(a.opened, url)
 		return nil
 	}
+	if cfg.FetchImage == nil {
+		cfg.FetchImage = a.fetchImage
+	}
 	a.m = tui.New(cfg)
 	for _, msg := range run(a.m.Init()) {
 		a.send(msg)
@@ -164,7 +236,7 @@ func (a *app) send(msg tea.Msg) []string {
 		var cmd tea.Cmd
 		a.m, cmd = a.m.Update(queue[0])
 		queue = queue[1:]
-		for _, out := range run(cmd) {
+		for _, out := range a.run(cmd) {
 			switch out := out.(type) {
 			case tea.RawMsg:
 				raw = append(raw, out.Msg.(string))
@@ -181,10 +253,15 @@ func (a *app) send(msg tea.Msg) []string {
 func (a *app) key(k string) []string {
 	a.t.Helper()
 	switch k {
-	case "right", "left", "up", "down", "tab", "enter":
+	case "right", "left", "up", "down", "tab", "enter", "esc", "pgup", "pgdown":
 		code := map[string]rune{"right": tea.KeyRight, "left": tea.KeyLeft, "up": tea.KeyUp,
-			"down": tea.KeyDown, "tab": tea.KeyTab, "enter": tea.KeyEnter}[k]
+			"down": tea.KeyDown, "tab": tea.KeyTab, "enter": tea.KeyEnter, "esc": tea.KeyEscape,
+			"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown}[k]
 		return a.send(tea.KeyPressMsg{Code: code})
+	case "space":
+		return a.send(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	case "shift+tab":
+		return a.send(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	}
 	return a.send(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
 }
@@ -221,9 +298,9 @@ func TestShowsTheMapAsAKittyImage(t *testing.T) {
 		t.Fatalf("placed an image before Bubble Tea drew its frame: %q", raw)
 	}
 	raw := a.wait(60 * time.Millisecond)
-	// 30 rows less 5 for the details area and 1 for the status line; the
-	// map has no warnings to add rows.
-	if len(raw) != 1 || !strings.Contains(raw[0], "\x1b_Ga=T,f=100,q=2,C=1,c=100,r=24,") {
+	// 30 rows less 3 for the strip and 1 for the status line; the map has
+	// no warnings to add rows.
+	if len(raw) != 1 || !strings.Contains(raw[0], "\x1b_Ga=T,f=100,q=2,C=1,c=100,r=26,") {
 		t.Fatalf("expected one Kitty placement over the graph area, got %q", raw)
 	}
 	for _, want := range []string{"#214", "2 frontier", "6 blocked", "Wayfinder: run Sandcastle"} {
@@ -397,13 +474,12 @@ func TestQuitClearsTheImage(t *testing.T) {
 func TestDetailsShowTheSelectedTicket(t *testing.T) {
 	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
 	a := start(t, src, 214).sized()
-	// The first frontier ticket starts selected.
+	// The first frontier ticket starts selected; it blocks two others.
 	for _, want := range []string{
 		"#215 Where does standalone Sandcastle live",
-		"grilling · frontier · unassigned",
-		"blocks: #220 · #221",
+		"· grilling · frontier · ⛔0 ↦2",
 	} {
-		if !strings.Contains(a.view(), want) {
+		if !strings.Contains(a.text(), want) {
 			t.Errorf("details lack %q:\n%s", want, a.view())
 		}
 	}
@@ -426,7 +502,7 @@ func TestArrowsMoveToTheNearestTicket(t *testing.T) {
 	if raw := a.wait(time.Second); placements(raw) != 1 {
 		t.Errorf("moving the selection placed %d images, want 1", placements(raw))
 	}
-	if !strings.Contains(a.view(), "#2 Two") || !strings.Contains(a.view(), "blocked by: #1 (open)") {
+	if !strings.Contains(a.text(), "#2 Two · task · blocked · ⛔1 ↦0") {
 		t.Errorf("right from #1 didn't select #2:\n%s", a.view())
 	}
 	a.key("left")
@@ -476,9 +552,8 @@ func TestOpensTheSelectedTicketInTheBrowser(t *testing.T) {
 	a := start(t, src, 214).sized()
 	a.key("o")
 	a.key("tab")
-	var next int
-	fmt.Sscanf(a.view()[strings.Index(a.view(), "\x1b[1m#")+len("\x1b[1m#"):], "%d", &next)
-	a.key("enter")
+	next := a.selected()
+	a.key("o")
 	want := []string{"https://github.com/banked/ask-barry/issues/215", fmt.Sprint("https://github.com/banked/ask-barry/issues/", next)}
 	if next == 215 || !slices.Equal(a.opened, want) {
 		t.Errorf("opened %q, want %q", a.opened, want)
@@ -519,7 +594,7 @@ func TestRedrawsOnlyOnChange(t *testing.T) {
 		t.Errorf("a changed map placed %d images, want 1", placements(raw))
 	}
 	// #215 is still selected, and is now claimed.
-	if !strings.Contains(a.view(), "grilling · claimed by octocat") {
+	if !strings.Contains(a.text(), "· grilling · claimed ·") {
 		t.Errorf("details don't follow the change:\n%s", a.view())
 	}
 }
@@ -560,14 +635,16 @@ func TestShowsWarnings(t *testing.T) {
 		}
 	}
 	// The graph gives up a row for each.
-	if raw := a.wait(time.Second); len(raw) != 1 || !strings.Contains(raw[0], ",c=80,r=18,") {
-		t.Errorf("want the image over 30-5-6-1 = 18 rows, got %q", raw)
+	if raw := a.wait(time.Second); len(raw) != 1 || !strings.Contains(raw[0], ",c=80,r=20,") {
+		t.Errorf("want the image over 30-3-6-1 = 20 rows, got %q", raw)
 	}
+	// #222's blocker in another repo counts too, and #222 blocks #221 in
+	// a cycle.
 	for !strings.Contains(a.view(), "\x1b[1m#222 ") {
 		a.key("tab")
 	}
-	if !strings.Contains(a.view(), "blocked by: #221 (open) · other/repo#9 (open)") {
-		t.Errorf("#222's cross-repo blocker isn't shown as owner/repo#N:\n%s", a.view())
+	if !strings.Contains(a.text(), "⛔2 ↦1") {
+		t.Errorf("#222's blockers aren't counted:\n%s", a.view())
 	}
 }
 
@@ -582,7 +659,7 @@ func TestAFailedListingIsRetried(t *testing.T) {
 	}
 }
 
-// selected is the number of the ticket the details area shows.
+// selected is the number of the ticket the strip shows.
 func (a *app) selected() int {
 	a.t.Helper()
 	v := a.view()
@@ -641,8 +718,8 @@ func TestAutoDirectionRefitsOnResize(t *testing.T) {
 	a.key("left")
 	a.send(tea.WindowSizeMsg{Width: 30, Height: 100})
 	raw := a.wait(time.Second)
-	if placements(raw) != 1 || !strings.Contains(raw[0], ",c=30,r=94,") {
-		t.Errorf("resizing didn't place the image over the new 30×94 graph area: %q", raw)
+	if placements(raw) != 1 || !strings.Contains(raw[0], ",c=30,r=96,") {
+		t.Errorf("resizing didn't place the image over the new 30×96 graph area: %q", raw)
 	}
 	if a.key("down"); a.selected() != 2 {
 		t.Errorf("in a tall pane, down from #1 selected #%d, want #2", a.selected())
@@ -751,7 +828,7 @@ func TestListNeverWritesKittyEscapes(t *testing.T) {
 func TestAPaneTooShortForTheGraphClearsIt(t *testing.T) {
 	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
 	a := start(t, src, 214).sized()
-	a.send(tea.WindowSizeMsg{Width: 100, Height: 6})
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 4})
 	if raw := a.wait(time.Second); len(raw) != 1 || raw[0] != "\x1b_Ga=d,d=A,q=2\x1b\\" {
 		t.Errorf("want the image cleared, got %q", raw)
 	}

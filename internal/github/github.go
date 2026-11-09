@@ -1,4 +1,4 @@
-// Package github is the only code that runs gh. It runs two fixed GraphQL
+// Package github is the only code that runs gh. It runs three fixed GraphQL
 // queries through the user's existing gh login and returns the raw JSON.
 package github
 
@@ -52,27 +52,63 @@ const ListQuery = `query($owner: String!, $name: String!) {
   }
 }`
 
+// IssueQuery fetches one issue, on the map or not, for the detail view.
+// wayfinder.ParseIssue reads its response.
+const IssueQuery = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    issue(number: $number) {
+      number title state stateReason body bodyHTML
+      labels(first: 20) { nodes { name } }
+      assignees(first: 10) { nodes { login } }
+      parent { number title state repository { nameWithOwner } }
+      subIssuesSummary { total completed }
+      subIssues(first: 100) {
+        nodes {
+          number title state repository { nameWithOwner }
+          assignees(first: 10) { nodes { login } }
+          labels(first: 20) { nodes { name } }
+        }
+      }
+      blockedBy(first: 50) { nodes { number title state repository { nameWithOwner } } }
+      blocking(first: 50) { nodes { number title state repository { nameWithOwner } } }
+    }
+  }
+}`
+
 // Source loads raw query responses. Tests use a fixture-backed fake.
 type Source interface {
 	LoadMap(ctx context.Context, number int) ([]byte, error)
 	ListMaps(ctx context.Context) ([]byte, error)
+	// LoadIssue loads issue number in repo, given as owner/name.
+	LoadIssue(ctx context.Context, repo string, number int) ([]byte, error)
 }
 
 // GH runs the queries with `gh api graphql` against one target.
 type GH struct{ Target Target }
 
 func (g GH) LoadMap(ctx context.Context, number int) ([]byte, error) {
-	return g.run(ctx, MapQuery, "-F", "number="+strconv.Itoa(number))
+	return g.run(ctx, MapQuery, g.Target.Repo, "-F", "number="+strconv.Itoa(number))
 }
 
 func (g GH) ListMaps(ctx context.Context) ([]byte, error) {
-	return g.run(ctx, ListQuery)
+	return g.run(ctx, ListQuery, g.Target.Repo)
 }
 
-func (g GH) run(ctx context.Context, query string, args ...string) ([]byte, error) {
+// LoadIssue names its repo, as the issue may live outside the target.
+func (g GH) LoadIssue(ctx context.Context, repo string, number int) ([]byte, error) {
+	if !ValidRepo(repo) {
+		return nil, fmt.Errorf("bad repo %q", repo)
+	}
+	return g.run(ctx, IssueQuery, repo, "-F", "number="+strconv.Itoa(number))
+}
+
+// run runs query against repo, or if that is empty the repo checked out in
+// the target's directory.
+func (g GH) run(ctx context.Context, query, repo string, args ...string) ([]byte, error) {
 	argv := []string{"api", "graphql", "-f", "query=" + query}
-	if g.Target.Repo != "" {
-		owner, name, _ := strings.Cut(g.Target.Repo, "/")
+	if repo != "" {
+		owner, name, _ := strings.Cut(repo, "/")
 		argv = append(argv, "-f", "owner="+owner, "-f", "name="+name)
 	} else {
 		// gh fills these from the repo checked out in the working directory.
@@ -94,7 +130,7 @@ func (g GH) run(ctx context.Context, query string, args ...string) ([]byte, erro
 	if msg == "" {
 		msg = err.Error()
 	}
-	if g.Target.Repo == "" {
+	if repo == "" {
 		return nil, fmt.Errorf("gh: %s (outside a GitHub checkout, pass -R owner/repo)", msg)
 	}
 	return nil, fmt.Errorf("gh: %s", msg)
