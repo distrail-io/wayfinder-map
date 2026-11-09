@@ -3,7 +3,7 @@
 A read-only terminal viewer that draws a Wayfinder map from GitHub Issues as a graph of its tickets and their blockers. It runs in Ghostty, or in a Herdr pane, and draws with Kitty graphics. In a terminal without Kitty graphics, it lists the tickets as text instead.
 
 ```sh
-wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list] [--no-mouse]
+wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list] [--no-mouse] [--no-images]
 ```
 
 MAP is `123`, `#123`, `owner/repo#123` or an issue URL. Without a MAP, a picker lists the repo's open maps, most recently updated first. Each row shows how many of the map's tickets are done, and how many are ready, claimed and blocked. `enter` opens the map under the cursor. The picker lists 50 maps; if there are more, open one directly with `wayfinder-map <number>`.
@@ -31,19 +31,23 @@ The map, or the picker, reloads every `--interval` (30s by default, 10s at least
 
 `--no-mouse` turns mouse reporting off, so clicks and drags go to the terminal. With the mouse on, most terminals still select text with Shift held while you drag.
 
-Each flag has an environment variable: `WAYFINDER_MAP_LOOK`, `WAYFINDER_MAP_DIR`, `WAYFINDER_MAP_INTERVAL`, `WAYFINDER_MAP_LIST` and `WAYFINDER_MAP_NO_MOUSE` (`1` or `0`). A flag beats its variable, which beats the default. An invalid value stops it at startup with an error that names the variable.
+`--no-images` lists the detail view's blockers and blocked tickets as text instead of drawing them as a mini-map.
+
+Each flag has an environment variable: `WAYFINDER_MAP_LOOK`, `WAYFINDER_MAP_DIR`, `WAYFINDER_MAP_INTERVAL`, `WAYFINDER_MAP_LIST`, `WAYFINDER_MAP_NO_MOUSE` and `WAYFINDER_MAP_NO_IMAGES` (`1` or `0`). A flag beats its variable, which beats the default. An invalid value stops it at startup with an error that names the variable.
 
 The repo comes from the first of these that is set: the `owner/repo` in MAP, `-R`, `GH_REPO`, the Herdr pane's checkout, then the current directory.
 
 ## Detail view
 
-The detail view fills the pane with one issue: its number, title, state, type, assignees and labels, the map it belongs to, what it is blocked by and what it blocks, its sub-issues with how many are done, and its body rendered from markdown. Blockers the map doesn't draw, from another repo or not on the map, are listed under "Also blocked by", so a blocked ticket never looks unblocked. The map issue lists every ticket. Links are shown with their URL and can be opened from terminals that support OSC 8 hyperlinks; images show as `🖼 alt text` placeholders, and `o` opens the issue to see them.
+The detail view fills the pane with one issue: its number, title, state, type, assignees and labels, the map it belongs to, what it is blocked by and what it blocks, its sub-issues with how many are done, and its body rendered from markdown. Blockers the map doesn't draw, from another repo or not on the map, are listed under "Also blocked by", so a blocked ticket never looks unblocked.
+
+Where the map is drawn, a ticket's blockers and the tickets it blocks are drawn as a mini-map: the map filtered to the ticket and its neighbours, with every edge between them, in the same look, at the map's full size or shrunk to fit the pane's width. The ticket has a double border and the cursor the map's yellow ring. The mini-map is printed as Kitty Unicode placeholders, so it scrolls with the text; it is deleted when you leave the view. In the compact look the neighbours' titles are listed under it, and a ticket with no blockers or blocked tickets says `no dependencies`. In list mode, in WezTerm (which answers the Kitty query but can't show placeholders), and with `--no-images`, they are listed as text instead. The map issue lists every ticket. Links are shown with their URL and can be opened from terminals that support OSC 8 hyperlinks; images show as `🖼 alt text` placeholders, and `o` opens the issue to see them.
 
 It shows what the map already knows at once, and the rest once the issue has loaded. It reloads with the map, and on `r`. It is read-only.
 
 | Key | |
 |---|---|
-| `tab` / `shift+tab` | move the cursor through the related issues, including ones in other repos |
+| `tab` / `shift+tab` | move the cursor through the related issues and the mini-map's tickets, including issues in other repos |
 | `enter` | open the issue under the cursor |
 | `b` / `esc` | go back to the previous issue, then to the map |
 | `j` / `k` / `↑` / `↓` | scroll a line |
@@ -51,10 +55,11 @@ It shows what the map already knows at once, and the rest once the issue has loa
 | `g` / `G` | go to the top or the bottom |
 | `o` | open the issue in the browser |
 | `c` | switch the look, for the map too |
+| `d` | switch the mini-map between left to right and top to bottom; it opens left to right, whatever the map's direction |
 | `r` | refresh now |
 | `q` | quit |
 
-A click on a related issue opens it, and the wheel scrolls. Going back to the map selects the last ticket you viewed.
+A click on a related issue or a mini-map ticket opens it, and the wheel scrolls. Going back to the map selects the last ticket you viewed.
 
 ## Terminals without Kitty graphics
 

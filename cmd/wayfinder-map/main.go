@@ -1,7 +1,7 @@
 // Command wayfinder-map draws a Wayfinder map from GitHub Issues as a graph
 // in the terminal. It reads through the user's gh login and never writes.
 //
-//	wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list] [--no-mouse]
+//	wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list] [--no-mouse] [--no-images]
 //
 // MAP is 123, #123, owner/repo#123 or an issue URL. Without it, a picker
 // lists the repo's open maps.
@@ -55,13 +55,14 @@ func run(args []string, getenv func(string) string, stdout io.Writer) error {
 		return nil
 	}
 	src := github.GH{Target: github.Resolve(o.ref, o.repo, getenv)}
-	_, err = tea.NewProgram(tui.New(o.config(src, func() bool { return kitty.Probe(probeTimeout) }))).Run()
+	_, err = tea.NewProgram(tui.New(o.config(src, getenv, func() bool { return kitty.Probe(probeTimeout) }))).Run()
 	return err
 }
 
 // config is the app's config for the options, asking images whether the
 // terminal shows Kitty graphics if that decides it.
-func (o options) config(src github.Source, images func() bool) tui.Config {
+func (o options) config(src github.Source, getenv func(string) string, images func() bool) tui.Config {
+	list := o.showList(images)
 	return tui.Config{
 		Source:   src,
 		Number:   o.ref.Number,
@@ -69,8 +70,10 @@ func (o options) config(src github.Source, images func() bool) tui.Config {
 		Look:     o.look,
 		Dir:      o.dir,
 		AutoDir:  o.autoDir,
-		List:     o.showList(images),
+		List:     list,
 		NoMouse:  o.noMouse,
+		// WezTerm answers the probe but can't show Unicode placeholders.
+		Images: !list && !o.noImages && getenv("TERM_PROGRAM") != "WezTerm",
 	}
 }
 
@@ -83,6 +86,7 @@ type options struct {
 	interval time.Duration
 	list     setBool
 	noMouse  bool
+	noImages bool
 	version  bool
 }
 
@@ -103,6 +107,7 @@ var envVars = []struct{ name, flag string }{
 	{"WAYFINDER_MAP_INTERVAL", "interval"},
 	{"WAYFINDER_MAP_LIST", "list"},
 	{"WAYFINDER_MAP_NO_MOUSE", "no-mouse"},
+	{"WAYFINDER_MAP_NO_IMAGES", "no-images"},
 }
 
 func parseOptions(args []string, getenv func(string) string) (options, error) {
@@ -119,6 +124,7 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	fs.Var((*intervalValue)(&o.interval), "interval", "how often to reload the map, at least "+minInterval.String())
 	fs.Var(&o.list, "list", "list the tickets as text instead of drawing the graph (default: if the terminal lacks Kitty graphics)")
 	fs.BoolVar(&o.noMouse, "no-mouse", false, "leave the mouse to the terminal, for its own text selection")
+	fs.BoolVar(&o.noImages, "no-images", false, "list the detail view's relationships as text instead of drawing a mini-map")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	for _, e := range envVars {
 		if v := getenv(e.name); v != "" {
@@ -146,14 +152,15 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	return o, nil
 }
 
-const usage = `usage: wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list] [--no-mouse]
+const usage = `usage: wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [--interval 30s] [--list] [--no-mouse] [--no-images]
 
 MAP is 123, #123, owner/repo#123 or an issue URL; without it, a picker lists
 the repo's open maps. WAYFINDER_MAP_LOOK, WAYFINDER_MAP_DIR,
-WAYFINDER_MAP_INTERVAL, WAYFINDER_MAP_LIST and WAYFINDER_MAP_NO_MOUSE (1 or
-0) set the flags of those names; a flag beats its variable. Unless --list is
-set either way, the tickets are listed if the terminal doesn't say it shows
-Kitty graphics.
+WAYFINDER_MAP_INTERVAL, WAYFINDER_MAP_LIST, WAYFINDER_MAP_NO_MOUSE and
+WAYFINDER_MAP_NO_IMAGES (1 or 0) set the flags of those names; a flag beats
+its variable. Unless --list is set either way, the tickets are listed if the
+terminal doesn't say it shows Kitty graphics. The detail view's mini-map is
+drawn wherever the map is, except in WezTerm, which can't show it.
 `
 
 type lookValue draw.Look
