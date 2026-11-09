@@ -183,10 +183,10 @@ func TestTheMiniMapScrollsWithTheView(t *testing.T) {
 	}
 }
 
-// Tab moves the cursor through the parent link, then the mini-map's cards,
-// which show the selection's ring, redrawn once the keys stop; Enter
-// re-centres on the card.
-func TestTabRingsTheMiniMapsCards(t *testing.T) {
+// Tab moves the cursor through the parent link, then the mini-map's
+// tickets, which show the selection's ring, redrawn once the keys stop;
+// Enter re-centres on the ticket.
+func TestTabRingsTheMiniMapsTickets(t *testing.T) {
 	a, src := images(t, "map-214.json")
 	a.key("enter")
 	if s := transmitted(t, a.wait(time.Second)); len(s) != 1 || hasRing(s[0].img) {
@@ -201,24 +201,25 @@ func TestTabRingsTheMiniMapsCards(t *testing.T) {
 		t.Errorf("tab drew at once, not after the frame: %q", raw)
 	}
 	if a.row("› ") >= 0 {
-		t.Errorf("the cursor's on a card, but a row is marked:\n%s", a.view())
+		t.Errorf("the cursor's on a ticket in the mini-map, but a row is marked:\n%s", a.view())
 	}
 	s := transmitted(t, a.wait(time.Second))
 	if len(s) != 1 || !hasRing(s[0].img) {
-		t.Fatalf("the card under the cursor has no ring")
+		t.Fatalf("the ticket under the cursor has no ring")
 	}
-	// The first card along the way is #220, as #215 blocks #221 through it.
+	// The first ticket along the way is #220, as #215 blocks #221 through it.
 	a.key("enter")
 	if got := src.issueLoaded[len(src.issueLoaded)-1]; got != "banked/ask-barry#220" {
-		t.Errorf("enter on the first card opened %s, want #220", got)
+		t.Errorf("enter on the first ticket opened %s, want #220", got)
 	}
 	if s := transmitted(t, a.wait(time.Second)); len(s) != 1 || hasRing(s[0].img) {
 		t.Errorf("re-centring didn't send a fresh mini-map without a ring")
 	}
 }
 
-// Tab scrolls the card under the cursor into view, as it does a row.
-func TestTabScrollsToTheCard(t *testing.T) {
+// Tab scrolls the mini-map's ticket under the cursor into view, as it does
+// a row.
+func TestTabScrollsToTheTicket(t *testing.T) {
 	a, _ := images(t, "map-214.json")
 	a.send(tea.WindowSizeMsg{Width: 100, Height: 8})
 	a.key("enter")
@@ -229,13 +230,13 @@ func TestTabScrollsToTheCard(t *testing.T) {
 	}
 	a.key("tab")
 	if rows, _ := a.placeholderRows(); a.row("#215 Where") >= 0 || len(rows) < 4 {
-		t.Errorf("tab to a card didn't scroll the mini-map into view:\n%s", a.view())
+		t.Errorf("tab to a ticket didn't scroll the mini-map into view:\n%s", a.view())
 	}
 }
 
-// A click on a mini-map card re-centres on it; a click on the focus or
-// beside the cards does nothing.
-func TestClickingAMiniMapCard(t *testing.T) {
+// A click on a ticket in the mini-map re-centres on it; a click on the
+// focus or beside the tickets does nothing.
+func TestClickingAMiniMapTicket(t *testing.T) {
 	a, src := images(t, "map-214.json")
 	a.key("enter")
 	s := transmitted(t, a.wait(time.Second))[0]
@@ -244,7 +245,7 @@ func TestClickingAMiniMapCard(t *testing.T) {
 	a.click(0, rows[0])
 	a.click(s.cols/6, rows[len(rows)/2])
 	if len(src.issueLoaded) != 1 {
-		t.Fatalf("clicks off the cards or on the focus loaded %v", src.issueLoaded)
+		t.Fatalf("clicks off the tickets or on the focus loaded %v", src.issueLoaded)
 	}
 	for y := rows[0]; y <= rows[len(rows)-1] && len(src.issueLoaded) == 1; y++ {
 		a.click(s.cols/2, y)

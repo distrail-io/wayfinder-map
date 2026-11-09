@@ -51,11 +51,11 @@ const imageShare = 60
 // those not fetched, or being fetched, and those that failed to fetch.
 // Without inline images there is no need.
 func (m Model) fetchImages() (Model, tea.Cmd) {
-	if !m.images() {
+	if !m.inlineImages() {
 		return m, nil
 	}
 	var cmds []tea.Cmd
-	for _, im := range m.detail.images {
+	for _, im := range m.detail.bodyImages {
 		a := images.Asset(im.URL)
 		p, ok := m.pictures[a]
 		if (ok && !p.retry) || !images.Allowed(im.URL) {
@@ -103,7 +103,7 @@ func (m Model) renderBody() Model {
 	if m.detail.issue == nil {
 		return m
 	}
-	slots := make([]slot, len(m.detail.images))
+	slots := make([]slot, len(m.detail.bodyImages))
 	m.detail.body = markdown.Render(m.detail.issue.Body, m.cols, func(n, width int) []string {
 		if n >= len(slots) {
 			return nil
@@ -122,8 +122,8 @@ func (m Model) renderBody() Model {
 // or for an image that can't be shown, there is no slot, and the image is a
 // 🖼 placeholder.
 func (m Model) slot(n, width int) (slot, []string) {
-	im := m.detail.images[n]
-	if !m.images() || !images.Allowed(im.URL) || m.cellW <= 0 || m.cellH <= 0 {
+	im := m.detail.bodyImages[n]
+	if !m.inlineImages() || !images.Allowed(im.URL) || m.cellW <= 0 || m.cellH <= 0 {
 		return slot{}, nil
 	}
 	a := images.Asset(im.URL)

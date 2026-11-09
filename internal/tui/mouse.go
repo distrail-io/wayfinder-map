@@ -25,10 +25,7 @@ func (m Model) click(x, y int) (tea.Model, tea.Cmd) {
 		}
 		target := l.rows[i].target
 		if mi := l.mini; mi != nil && i >= l.miniAt && i < l.miniAt+mi.rows {
-			target = -1
-			if n := slices.Index(mi.cards, m.cardAt(mi, x, i-l.miniAt)); n >= 0 {
-				target = l.firstCard + n
-			}
+			target = l.targetOf(m.hit(mi.mp, mi.res, m.transform(mi), x, i-l.miniAt))
 		}
 		if target >= 0 {
 			return m.recentre(append(slices.Clip(m.detail.stack), l.targets[target]))

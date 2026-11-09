@@ -36,9 +36,9 @@ type detail struct {
 	body  []string         // the issue's body, rendered to the pane's width
 	err   error            // the last fetch's error
 
-	images []markdown.Image // the body's images
-	slots  []slot           // where each is shown, if it is
-	sent   []slot           // what each image ID was last sent as
+	bodyImages []markdown.Image // the body's images
+	slots      []slot           // where each is shown, if it is
+	sent       []slot           // what each image ID was last sent as
 }
 
 type issueMsg struct {
@@ -107,7 +107,7 @@ func (m Model) fetched(msg issueMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.detail.issue = msg.is
-	m.detail.images = markdown.Images(msg.is.Body, msg.is.BodyHTML)
+	m.detail.bodyImages = markdown.Images(msg.is.Body, msg.is.BodyHTML)
 	m, fetch := m.fetchImages()
 	m = m.renderBody()
 	if !m.unsent() {
@@ -144,11 +144,11 @@ func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
 		} else {
 			d.cursor = (max(d.cursor, 0) + len(targets) - 1) % len(targets)
 		}
-		// Scroll the cursor's card or row into view.
+		// Scroll the cursor's row, or its ticket in the mini-map, into view.
 		from := slices.IndexFunc(rows, func(r detailRow) bool { return r.target == d.cursor })
 		to := from
-		if i := d.cursor - l.firstCard; l.mini != nil && i >= 0 && i < len(l.mini.cards) {
-			from, to = m.cardRows(l.mini, l.mini.cards[i])
+		if n := l.neighbourAt(d.cursor); n != 0 {
+			from, to = m.ticketRows(l.mini, n)
 			from, to = l.miniAt+from, l.miniAt+to
 		}
 		d.scroll = clampScroll(min(max(d.scroll, to-h+1), from), len(rows), h)
@@ -190,11 +190,30 @@ type detailRow struct {
 // detailLayout is the detail view laid out: its rows, the related issues
 // the cursor moves through, in the order shown, and the mini-map, if any.
 type detailLayout struct {
-	rows      []detailRow
-	targets   []wayfinder.IssueRef
-	mini      *mini
-	miniAt    int // the row the mini-map's image starts on
-	firstCard int // the target of the mini-map's first card
+	rows           []detailRow
+	targets        []wayfinder.IssueRef
+	mini           *mini
+	miniAt         int // the row the mini-map's image starts on
+	firstNeighbour int // the target of the mini-map's first neighbour
+}
+
+// neighbourAt is the mini-map's neighbour that target is, or 0.
+func (l detailLayout) neighbourAt(target int) int {
+	if i := target - l.firstNeighbour; l.mini != nil && i >= 0 && i < len(l.mini.neighbours) {
+		return l.mini.neighbours[i]
+	}
+	return 0
+}
+
+// targetOf is the target that the mini-map's neighbour n is, or -1.
+func (l detailLayout) targetOf(n int) int {
+	if l.mini == nil {
+		return -1
+	}
+	if i := slices.Index(l.mini.neighbours, n); i >= 0 {
+		return l.firstNeighbour + i
+	}
+	return -1
 }
 
 // detailLayout lays the detail view out: the header, the relationships and
@@ -289,7 +308,7 @@ func (m Model) detailLayout() detailLayout {
 		add("")
 		add("Blocked by and blocks: " + loading)
 	}
-	l := detailLayout{firstCard: len(targets)}
+	l := detailLayout{firstNeighbour: len(targets)}
 	// Without a mini-map, the focus stands between the lists of what blocks
 	// it and what it blocks, where the mini-map would draw it.
 	sections := []struct {
@@ -300,7 +319,7 @@ func (m Model) detailLayout() detailLayout {
 	}{{"Blocked by", drawn, false, false}, {"Focus", nil, false, len(drawn) > 0 || len(blocks) > 0},
 		{"Blocks", blocks, false, false}, {"Also blocked by", undrawn, true, false}}
 	switch {
-	case mi != nil && len(mi.cards) == 0:
+	case mi != nil && len(mi.neighbours) == 0:
 		// A blocker off the map is a dependency still.
 		if len(undrawn) == 0 {
 			add("")
@@ -315,7 +334,7 @@ func (m Model) detailLayout() detailLayout {
 		for _, p := range kitty.Placeholders(miniMapID, mi.cols, mi.rows) {
 			rows = append(rows, detailRow{p, -1})
 		}
-		for _, n := range mi.cards {
+		for _, n := range mi.neighbours {
 			r := m.related(m.onMap(n), false)
 			if m.look == draw.Compact {
 				link(r, m.stateOf(r))
@@ -508,7 +527,7 @@ func (m Model) detailStatus() string {
 	const kept = 7
 	hints := []hint{{f.Ref(m.shown.Repo), kept},
 		{"tab select", 6}, {"enter open", 5}, {"b back", kept}, {"o browser", 2}, {"c look: " + m.look.String(), 4}}
-	if m.images() { // only the mini-map has a direction
+	if m.inlineImages() { // only the mini-map has a direction
 		hints = append(hints, hint{"d dir: " + m.detail.dir.String(), 3})
 	}
 	hints = append(hints, hint{"r refresh", 1}, hint{"q quit", kept})
