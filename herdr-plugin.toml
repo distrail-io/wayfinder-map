@@ -17,4 +17,4 @@ command = ["bin/wayfinder-map"]
 id = "open"
 title = "Open Wayfinder map"
 contexts = ["workspace"]
-command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin distrail-io.wayfinder-map --entrypoint map --placement split --direction right --no-focus"]
+command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin distrail-io.wayfinder-map --entrypoint map --placement split --direction right"]
