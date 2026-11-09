@@ -101,11 +101,11 @@ func (m Model) miniMapImage() tea.Cmd {
 	return tea.Raw(kitty.Transmit(miniMapID, img, mi.cols, mi.rows))
 }
 
-// deleteMiniMap deletes the mini-map's image when leaving the detail view;
-// Clear doesn't remove its virtual placement.
-func (m Model) deleteMiniMap() tea.Cmd {
+// deleteImages deletes the mini-map's image and the body's when leaving
+// the detail view; Clear doesn't remove their virtual placements.
+func (m Model) deleteImages() tea.Cmd {
 	if m.view != detailView || !m.images() {
 		return nil
 	}
-	return tea.Raw(kitty.Delete(miniMapID))
+	return tea.Batch(tea.Raw(kitty.Delete(miniMapID)), m.deleteBodyImages())
 }

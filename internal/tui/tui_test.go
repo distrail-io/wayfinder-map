@@ -137,6 +137,31 @@ func run(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
+// run is run, but while the app is holding it holds back what a command
+// that fetched an image produces.
+func (a *app) run(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	fetches := len(a.fetches)
+	msg := cmd()
+	if msg == nil {
+		return nil
+	}
+	if v := reflect.ValueOf(msg); v.Kind() == reflect.Slice && v.Type().Elem() == reflect.TypeFor[tea.Cmd]() {
+		var out []tea.Msg
+		for i := range v.Len() {
+			out = append(out, a.run(v.Index(i).Interface().(tea.Cmd))...)
+		}
+		return out
+	}
+	if a.holding && len(a.fetches) > fetches {
+		a.held = append(a.held, msg)
+		return nil
+	}
+	return []tea.Msg{msg}
+}
+
 type app struct {
 	t      *testing.T
 	m      tea.Model
@@ -144,6 +169,34 @@ type app struct {
 	clock  *clock
 	opened []string
 	quit   bool
+
+	// The fake image fetcher serves pics by URL and records each fetch.
+	// While holding, what a fetch produces is held back until release.
+	pics    map[string][]byte
+	fetches []string
+	holding bool
+	held    []tea.Msg
+}
+
+func (a *app) fetchImage(url string) ([]byte, error) {
+	a.fetches = append(a.fetches, url)
+	if data, ok := a.pics[url]; ok {
+		return data, nil
+	}
+	return nil, errors.New("not found")
+}
+
+// release delivers the messages held back since holding began.
+func (a *app) release() []string {
+	a.t.Helper()
+	a.holding = false
+	var raw []string
+	held := a.held
+	a.held = nil
+	for _, msg := range held {
+		raw = append(raw, a.send(msg)...)
+	}
+	return raw
 }
 
 func start(t *testing.T, src *fakeSource, number int) *app {
@@ -163,6 +216,9 @@ func startWith(t *testing.T, src *fakeSource, cfg tui.Config) *app {
 		a.opened = append(a.opened, url)
 		return nil
 	}
+	if cfg.FetchImage == nil {
+		cfg.FetchImage = a.fetchImage
+	}
 	a.m = tui.New(cfg)
 	for _, msg := range run(a.m.Init()) {
 		a.send(msg)
@@ -180,7 +236,7 @@ func (a *app) send(msg tea.Msg) []string {
 		var cmd tea.Cmd
 		a.m, cmd = a.m.Update(queue[0])
 		queue = queue[1:]
-		for _, out := range run(cmd) {
+		for _, out := range a.run(cmd) {
 			switch out := out.(type) {
 			case tea.RawMsg:
 				raw = append(raw, out.Msg.(string))

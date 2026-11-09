@@ -25,8 +25,6 @@ const (
 	cell       = "\U0010EEEE"
 )
 
-var transmitHead = regexp.MustCompile(`\x1b_Gf=100,q=2,i=` + miniID + `,U=1,c=(\d+),r=(\d+),a=T[,;]`)
-
 // sent is an image sent for placeholders in raw output, and the cells it
 // spans.
 type sent struct {
@@ -37,6 +35,13 @@ type sent struct {
 // transmitted is the mini-maps sent in raw output, decoded.
 func transmitted(t *testing.T, raw []string) []sent {
 	t.Helper()
+	return transmittedAs(t, raw, miniID)
+}
+
+// transmittedAs is the images sent with ID id in raw output, decoded.
+func transmittedAs(t *testing.T, raw []string, id string) []sent {
+	t.Helper()
+	transmitHead := regexp.MustCompile(`\x1b_Gf=100,q=2,i=` + id + `,U=1,c=(\d+),r=(\d+),a=T[,;]`)
 	var out []sent
 	for _, r := range raw {
 		m := transmitHead.FindStringSubmatchIndex(r)

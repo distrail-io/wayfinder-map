@@ -124,7 +124,7 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	fs.Var((*intervalValue)(&o.interval), "interval", "how often to reload the map, at least "+minInterval.String())
 	fs.Var(&o.list, "list", "list the tickets as text instead of drawing the graph (default: if the terminal lacks Kitty graphics)")
 	fs.BoolVar(&o.noMouse, "no-mouse", false, "leave the mouse to the terminal, for its own text selection")
-	fs.BoolVar(&o.noImages, "no-images", false, "list the detail view's relationships as text instead of drawing a mini-map")
+	fs.BoolVar(&o.noImages, "no-images", false, "list the detail view's relationships as text instead of drawing a mini-map, and show its images as placeholders")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	for _, e := range envVars {
 		if v := getenv(e.name); v != "" {
@@ -159,8 +159,9 @@ the repo's open maps. WAYFINDER_MAP_LOOK, WAYFINDER_MAP_DIR,
 WAYFINDER_MAP_INTERVAL, WAYFINDER_MAP_LIST, WAYFINDER_MAP_NO_MOUSE and
 WAYFINDER_MAP_NO_IMAGES (1 or 0) set the flags of those names; a flag beats
 its variable. Unless --list is set either way, the tickets are listed if the
-terminal doesn't say it shows Kitty graphics. The detail view's mini-map is
-drawn wherever the map is, except in WezTerm, which can't show it.
+terminal doesn't say it shows Kitty graphics. The detail view's mini-map and
+images are drawn wherever the map is, except in WezTerm, which can't show
+them.
 `
 
 type lookValue draw.Look

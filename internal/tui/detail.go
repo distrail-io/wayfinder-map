@@ -33,6 +33,10 @@ type detail struct {
 	issue *wayfinder.Issue // the focus, fetched; nil until then
 	body  []string         // the issue's body, rendered to the pane's width
 	err   error            // the last fetch's error
+
+	images []markdown.Image // the body's images
+	slots  []slot           // where each is shown, if it is
+	sent   []slot           // what each image ID was last sent as
 }
 
 type issueMsg struct {
@@ -56,11 +60,12 @@ func (m Model) openDetail(r ref) (tea.Model, tea.Cmd) {
 }
 
 // recentre makes the top of stack the focus, fetches it and draws its
-// mini-map.
+// mini-map. The last focus's images go.
 func (m Model) recentre(stack []ref) (Model, tea.Cmd) {
+	del := m.deleteBodyImages()
 	m.detail = detail{stack: stack, cursor: -1, dir: m.detail.dir}
 	m, redraw := m.redraw()
-	return m, tea.Batch(m.loadIssue(), redraw)
+	return m, tea.Batch(del, m.loadIssue(), redraw)
 }
 
 // detailBack steps back to the previous focus, or leaves for the map with
@@ -72,7 +77,7 @@ func (m Model) detailBack() (tea.Model, tea.Cmd) {
 	if f := m.focus(); f.repo == m.shown.Repo && m.shown.Ticket(f.number) != nil {
 		m.sel = f.number
 	}
-	del := m.deleteMiniMap()
+	del := m.deleteImages()
 	m.view, m.detail = mapView, detail{}
 	m, redraw := m.relayout().redraw()
 	return m, tea.Batch(del, redraw)
@@ -91,22 +96,24 @@ func (m Model) loadIssue() tea.Cmd {
 	}
 }
 
-// fetched takes the focus issue. A failed fetch keeps what was shown, with
-// the error in place of the body.
-func (m Model) fetched(msg issueMsg) Model {
+// fetched takes the focus issue and fetches its body's images straight
+// away. A failed fetch keeps what was shown, with the error in place of the
+// body.
+func (m Model) fetched(msg issueMsg) (tea.Model, tea.Cmd) {
 	m.detail.err = msg.err
-	if msg.err == nil {
-		m.detail.issue = msg.is
-		m = m.renderBody()
+	if msg.err != nil {
+		return m, nil
 	}
-	return m
-}
-
-func (m Model) renderBody() Model {
-	if m.detail.issue != nil {
-		m.detail.body = markdown.Render(m.detail.issue.Body, m.cols, nil)
+	m.detail.issue = msg.is
+	m.detail.images = markdown.Images(msg.is.Body, msg.is.BodyHTML)
+	m, fetch := m.fetchImages()
+	m = m.renderBody()
+	if !m.unsent() {
+		return m, fetch
 	}
-	return m
+	// Images already fetched, for an issue seen before.
+	m, redraw := m.redraw()
+	return m, tea.Batch(fetch, redraw)
 }
 
 func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {

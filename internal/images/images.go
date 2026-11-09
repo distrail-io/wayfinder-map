@@ -49,6 +49,17 @@ func Allowed(u string) bool {
 	return err == nil && p.Scheme == "https" && p.User == nil && p.Port() == "" && slices.Contains(Hosts, p.Host)
 }
 
+// Asset names the image u points at: its host and path, without the query
+// that a signed URL's short-lived signature is in. It stays the same when
+// GitHub signs the URL afresh.
+func Asset(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		return u
+	}
+	return p.Host + p.Path
+}
+
 // Client fetches images. Its zero value uses the default transport.
 type Client struct{ Transport http.RoundTripper }
 

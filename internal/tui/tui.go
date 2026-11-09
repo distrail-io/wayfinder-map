@@ -27,6 +27,7 @@ import (
 
 	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/github"
+	"github.com/distrail-io/wayfinder-map/internal/images"
 	"github.com/distrail-io/wayfinder-map/internal/kitty"
 	"github.com/distrail-io/wayfinder-map/internal/layout"
 	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
@@ -57,10 +58,14 @@ type Config struct {
 
 	// NoMouse leaves the mouse to the terminal, for its own text selection.
 	NoMouse bool
-	// Images shows the detail view's mini-map inline, with Kitty Unicode
-	// placeholders. Without it, or in list mode, the detail view lists the
-	// focus ticket's blockers and what it blocks as text.
+	// Images shows the detail view's mini-map and the body's images inline,
+	// with Kitty Unicode placeholders. Without it, or in list mode, the
+	// detail view lists the focus ticket's blockers and what it blocks as
+	// text, and the body's images are placeholders.
 	Images bool
+	// FetchImage gets an image in a body from one of GitHub's image hosts.
+	// Nil fetches it over the network, with no credentials.
+	FetchImage func(url string) ([]byte, error)
 }
 
 const DefaultInterval = 30 * time.Second
@@ -89,7 +94,8 @@ type Model struct {
 	gen        int // the latest scheduled draw
 	pollGen    int // the latest scheduled poll
 
-	detail detail // the detail view, while it is shown
+	detail   detail             // the detail view, while it is shown
+	pictures map[string]picture // the body images fetched, by asset
 }
 
 // view is what fills the pane: the picker, a map, or the detail view of
@@ -144,6 +150,9 @@ func New(cfg Config) Model {
 	}
 	if cfg.Open == nil {
 		cfg.Open = openURL
+	}
+	if cfg.FetchImage == nil {
+		cfg.FetchImage = images.Client{}.Fetch
 	}
 	v := mapView
 	if cfg.Number == 0 {
@@ -212,8 +221,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case issueMsg:
 		// An issue that arrives after moving on is dropped.
 		if m.view == detailView && msg.ref == m.focus() {
-			return m.fetched(msg), nil
+			return m.fetched(msg)
 		}
+	case pictureMsg:
+		return m.pictured(msg)
 	case pollMsg:
 		if int(msg) == m.pollGen && !m.loading {
 			return m.fetch()
@@ -231,7 +242,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if m.view == detailView {
-			return m, m.miniMapImage()
+			m, send := m.sendImages()
+			return m, tea.Batch(m.miniMapImage(), send)
 		}
 		if m.cfg.List || m.view != mapView {
 			break
@@ -393,7 +405,7 @@ func firstSelection(mp *wayfinder.Map) int {
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "q", "ctrl+c":
-		return m, tea.Sequence(m.clear(), m.deleteMiniMap(), tea.Quit)
+		return m, tea.Sequence(m.clear(), m.deleteImages(), tea.Quit)
 	case "r":
 		if m.loading {
 			return m, nil

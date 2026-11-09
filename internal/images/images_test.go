@@ -201,4 +201,3 @@ func TestScaleFitsTheBoxKeepingTheShape(t *testing.T) {
 		t.Errorf("the image spills below its shape")
 	}
 }
-
