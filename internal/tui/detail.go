@@ -404,6 +404,9 @@ func (m Model) facts(f ref, is *wayfinder.Issue, t *wayfinder.Ticket, isMap bool
 	}
 	if is != nil { // fresher than the map
 		typ, who = is.Type, is.Assignees
+		if parts[0] == wayfinder.Done.String() && is.CloseReason != "" {
+			parts = append(parts, is.CloseReason)
+		}
 	}
 	if typ != wayfinder.NoType {
 		parts = append(parts, string(typ))

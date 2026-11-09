@@ -10,13 +10,16 @@ import (
 // Issue is one issue as the detail view shows it. It may be a ticket, the
 // map itself, or an issue off the map, in the map's repo or another.
 type Issue struct {
-	Repo      string
-	Number    int
-	Title     string
-	Closed    bool
-	Type      Type
-	Labels    []string
-	Assignees []string
+	Repo   string
+	Number int
+	Title  string
+	Closed bool
+	// CloseReason is why it was closed, if not as completed: "not planned"
+	// or "duplicate".
+	CloseReason string
+	Type        Type
+	Labels      []string
+	Assignees   []string
 
 	// Body is the issue's markdown as GitHub returns it, unsanitised: show
 	// it only through the markdown renderer, which sanitises as it renders.
@@ -57,6 +60,10 @@ func (i *Issue) State() State {
 	open := slices.ContainsFunc(i.BlockedBy, func(r Related) bool { return !r.Closed })
 	return stateOf(i.Closed, len(i.Assignees) > 0, open)
 }
+
+// closeReasons name the reasons GitHub gives for closing an issue, other
+// than as completed.
+var closeReasons = map[string]string{"NOT_PLANNED": "not planned", "DUPLICATE": "duplicate"}
 
 // ErrIssueNotFound means the repo or the issue doesn't exist, or isn't
 // visible.
@@ -109,6 +116,7 @@ func ParseIssue(raw []byte) (*Issue, error) {
 					Number           int
 					Title            string
 					State            string
+					StateReason      string
 					Body             string
 					BodyHTML         string
 					Labels           rawLabels
@@ -140,6 +148,9 @@ func ParseIssue(raw []byte) (*Issue, error) {
 		SubIssues: subIssuesOf(is.SubIssues.Nodes), BlockedBy: relatedOf(is.BlockedBy.Nodes), Blocking: relatedOf(is.Blocking.Nodes),
 	}
 	out.Type = typeOf(out.Labels)
+	if is.State == "CLOSED" {
+		out.CloseReason = closeReasons[is.StateReason]
+	}
 	if is.Parent != nil {
 		p := is.Parent.related()
 		out.Parent = &p

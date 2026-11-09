@@ -419,6 +419,31 @@ func TestSubIssuesOffTheMapShowClaimedAndTheirType(t *testing.T) {
 	}
 }
 
+// A ticket closed as not planned, or as a duplicate, says so once the
+// issue arrives; one closed as completed is just done.
+func TestTheHeaderSaysWhyATicketWasClosed(t *testing.T) {
+	for reason, want := range map[string]string{
+		"NOT_PLANNED": "done · not planned · task · assigned to hubot",
+		"DUPLICATE":   "done · duplicate · task · assigned to hubot",
+		"COMPLETED":   "done · task · assigned to hubot",
+	} {
+		t.Run(reason, func(t *testing.T) {
+			a, src := ask(t, "map-edge-cases.json", tui.Config{})
+			src.issues["banked/ask-barry#216"] = fmt.Appendf(nil, `{"data":{"repository":{"nameWithOwner":"banked/ask-barry","issue":{
+				"number":216,"title":"Sandcastle","state":"CLOSED","stateReason":%q,"body":"","labels":{"nodes":[{"name":"wayfinder:task"}]},
+				"assignees":{"nodes":[{"login":"hubot"}]},"subIssuesSummary":{"total":0,"completed":0},"subIssues":{"nodes":[]},
+				"blockedBy":{"nodes":[]},"blocking":{"nodes":[]}}}}}`, reason)
+			for a.selected() != 216 {
+				a.key("tab")
+			}
+			a.key("enter")
+			if a.lines()[1] != want {
+				t.Errorf("the header's facts are %q, want %q", a.lines()[1], want)
+			}
+		})
+	}
+}
+
 // The status line drops hints a pane has no room for, the least needed
 // first, but always says how to go back and quit.
 func TestTheDetailStatusLineFitsThePane(t *testing.T) {

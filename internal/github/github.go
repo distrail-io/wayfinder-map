@@ -58,7 +58,7 @@ const IssueQuery = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     nameWithOwner
     issue(number: $number) {
-      number title state body bodyHTML
+      number title state stateReason body bodyHTML
       labels(first: 20) { nodes { name } }
       assignees(first: 10) { nodes { login } }
       parent { number title state repository { nameWithOwner } }
