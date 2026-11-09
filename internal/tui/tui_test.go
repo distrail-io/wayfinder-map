@@ -197,10 +197,15 @@ func (a *app) send(msg tea.Msg) []string {
 func (a *app) key(k string) []string {
 	a.t.Helper()
 	switch k {
-	case "right", "left", "up", "down", "tab", "enter":
+	case "right", "left", "up", "down", "tab", "enter", "esc", "pgup", "pgdown":
 		code := map[string]rune{"right": tea.KeyRight, "left": tea.KeyLeft, "up": tea.KeyUp,
-			"down": tea.KeyDown, "tab": tea.KeyTab, "enter": tea.KeyEnter}[k]
+			"down": tea.KeyDown, "tab": tea.KeyTab, "enter": tea.KeyEnter, "esc": tea.KeyEscape,
+			"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown}[k]
 		return a.send(tea.KeyPressMsg{Code: code})
+	case "space":
+		return a.send(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	case "shift+tab":
+		return a.send(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	}
 	return a.send(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
 }
@@ -491,9 +496,8 @@ func TestOpensTheSelectedTicketInTheBrowser(t *testing.T) {
 	a := start(t, src, 214).sized()
 	a.key("o")
 	a.key("tab")
-	var next int
-	fmt.Sscanf(a.view()[strings.Index(a.view(), "\x1b[1m#")+len("\x1b[1m#"):], "%d", &next)
-	a.key("enter")
+	next := a.selected()
+	a.key("o")
 	want := []string{"https://github.com/banked/ask-barry/issues/215", fmt.Sprint("https://github.com/banked/ask-barry/issues/", next)}
 	if next == 215 || !slices.Equal(a.opened, want) {
 		t.Errorf("opened %q, want %q", a.opened, want)

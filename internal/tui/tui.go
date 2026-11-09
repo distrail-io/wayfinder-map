@@ -1,7 +1,8 @@
 // Package tui is the Bubble Tea app. A picker lists the repo's open maps; a
 // map is shown as a Kitty-graphics image, or as a list grouped by state,
-// with the selected ticket's details and a status line below. Both refresh
-// on an interval, and the map is redrawn only when it changes.
+// with the selected ticket in a strip and a status line below; the detail
+// view shows one issue in full, with its relationships and body. All three
+// refresh on an interval, and the map is redrawn only when it changes.
 package tui
 
 import (
@@ -79,6 +80,8 @@ type Model struct {
 	cellH      int
 	gen        int // the latest scheduled draw
 	pollGen    int // the latest scheduled poll
+
+	detail detail // the detail view, while it is shown
 }
 
 // view is what fills the pane: the picker, a map, or the detail view of
@@ -88,6 +91,7 @@ type view int
 const (
 	pickerView view = iota
 	mapView
+	detailView
 )
 
 type (
@@ -197,6 +201,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.view != pickerView && msg.number == m.number {
 			return m.loaded(msg)
 		}
+	case issueMsg:
+		// An issue that arrives after moving on is dropped.
+		if m.view == detailView && msg.ref == m.focus() {
+			return m.fetched(msg), nil
+		}
 	case pollMsg:
 		if int(msg) == m.pollGen && !m.loading {
 			return m.fetch()
@@ -208,9 +217,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.cols, m.rows = msg.Width, msg.Height
 		m.cellW, m.cellH = m.cfg.CellSize(m.cols, m.rows)
-		return m.fit().redraw()
+		return m.renderBody().fit().redraw()
 	case drawMsg:
-		if int(msg) != m.gen || m.cfg.List || m.shown == nil {
+		if int(msg) != m.gen || m.cfg.List || m.shown == nil || m.view != mapView {
 			break
 		}
 		if m.cols <= 0 || m.graphRows() <= 0 {
@@ -308,11 +317,15 @@ func (m Model) schedulePoll() (Model, tea.Cmd) {
 	return m, m.cfg.After(m.cfg.Interval, pollMsg(m.pollGen))
 }
 
-// fetch lists the maps in the picker, else loads the map.
+// fetch lists the maps in the picker, else loads the map, and the focus
+// issue in the detail view.
 func (m Model) fetch() (Model, tea.Cmd) {
 	m.loading = true
-	if m.view == pickerView {
+	switch m.view {
+	case pickerView:
 		return m, m.listMaps
+	case detailView:
+		return m, tea.Batch(m.load, m.loadIssue())
 	}
 	return m, m.load
 }
@@ -367,17 +380,29 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		return m.fetch()
 	}
-	if m.view == pickerView {
+	switch m.view {
+	case pickerView:
 		return m.pickerKey(k)
+	case detailView:
+		return m.detailKey(k)
 	}
 	if k == "b" || k == "esc" {
 		return m.back()
 	}
-	if m.shown == nil || m.sel == 0 {
+	if m.shown == nil {
 		return m, nil
 	}
-	if k == "o" || k == "enter" {
+	if k == "m" {
+		return m.openDetail(ref{m.shown.Repo, m.shown.Number})
+	}
+	if m.sel == 0 {
+		return m, nil
+	}
+	switch k {
+	case "o":
 		return m, m.open(m.shown.Repo, m.sel)
+	case "enter", "space":
+		return m.openDetail(ref{m.shown.Repo, m.sel})
 	}
 	if m.cfg.List {
 		return m.listKey(k)
@@ -385,7 +410,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	sel := m.sel
 	switch k {
 	case "c":
-		m.look = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}[m.look]
+		m.look = otherLook[m.look]
 		return m.relayout().redraw()
 	case "d":
 		m.dir, m.autoDir = map[layout.Dir]layout.Dir{layout.LR: layout.TB, layout.TB: layout.LR}[m.dir], false
@@ -540,9 +565,22 @@ func (m Model) image() string {
 	return kitty.Place(buf.Bytes(), m.cols, m.graphRows())
 }
 
+// otherLook is the look c switches to.
+var otherLook = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: draw.Cards}
+
+// newView is a full-screen view of s.
+func (m Model) newView(s string) tea.View {
+	v := tea.NewView(s)
+	v.AltScreen = true
+	return v
+}
+
 func (m Model) View() tea.View {
-	if m.view == pickerView {
+	switch m.view {
+	case pickerView:
 		return m.picker()
+	case detailView:
+		return m.detailView()
 	}
 	var b strings.Builder
 	if m.cfg.List && m.shown != nil {
@@ -556,9 +594,7 @@ func (m Model) View() tea.View {
 		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.status(), m.cols))
-	v := tea.NewView(b.String())
-	v.AltScreen = true
-	return v
+	return m.newView(b.String())
 }
 
 // listRows fills the graph area with the tickets grouped by state, a
@@ -624,9 +660,7 @@ func (m Model) picker() tea.View {
 		b.WriteString(line + "\n")
 	}
 	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m", truncate(m.pickerStatus(), m.cols))
-	v := tea.NewView(b.String())
-	v.AltScreen = true
-	return v
+	return m.newView(b.String())
 }
 
 func (m Model) pickerStatus() string {
@@ -738,9 +772,9 @@ func (m Model) hints() string {
 		dir = "auto (" + dir + ")"
 	}
 	last := fmt.Sprintf("c look: %s · d dir: %s", m.look, dir)
-	keys := []string{"←↑↓→ tab select", "o open", "b back", "r refresh", "q quit"}
+	keys := []string{"←↑↓→ tab select", "enter details", "o browser", "m map", "b back", "r refresh", "q quit"}
 	if m.cfg.List {
-		last, keys = "↑↓ select", []string{"o open", "b back", "r refresh", "q quit"}
+		last, keys = "↑↓ select", keys[1:]
 	}
 	fits := func(s string) bool { return ansi.StringWidth(s) <= m.cols }
 	if all := legends[0] + "  " + last + " · " + strings.Join(keys, " · "); fits(all) {
