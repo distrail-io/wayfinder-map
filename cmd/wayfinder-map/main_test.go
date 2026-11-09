@@ -128,6 +128,28 @@ func TestMapForms(t *testing.T) {
 	}
 }
 
+// The mouse is on unless --no-mouse or its variable turns it off.
+func TestNoMouseTurnsMouseReportingOff(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		env     map[string]string
+		noMouse bool
+	}{
+		{nil, nil, false},
+		{[]string{"--no-mouse"}, nil, true},
+		{nil, map[string]string{"WAYFINDER_MAP_NO_MOUSE": "1"}, true},
+		{[]string{"--no-mouse=false"}, map[string]string{"WAYFINDER_MAP_NO_MOUSE": "1"}, false},
+	} {
+		o, err := parseOptions(c.args, env(c.env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := o.config(nil, func() bool { return true }).NoMouse; got != c.noMouse {
+			t.Errorf("%q %v: NoMouse %v, want %v", c.args, c.env, got, c.noMouse)
+		}
+	}
+}
+
 // Without --list or its variable, the terminal is asked whether it shows
 // Kitty graphics; set either way, it isn't.
 func TestListUnlessTheTerminalShowsImages(t *testing.T) {

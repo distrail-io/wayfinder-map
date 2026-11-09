@@ -53,6 +53,9 @@ type Config struct {
 	After func(d time.Duration, msg tea.Msg) tea.Cmd
 	// Open shows a URL in the browser. Nil runs the platform's opener.
 	Open func(url string) error
+
+	// NoMouse leaves the mouse to the terminal, for its own text selection.
+	NoMouse bool
 }
 
 const DefaultInterval = 30 * time.Second
@@ -229,6 +232,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Raw(m.image())
 	case tea.KeyPressMsg:
 		return m.key(msg.String())
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			return m.click(msg.X, msg.Y)
+		}
+	case tea.MouseWheelMsg:
+		return m.wheel(msg.Button)
 	}
 	return m, nil
 }
@@ -572,6 +581,9 @@ var otherLook = map[draw.Look]draw.Look{draw.Cards: draw.Compact, draw.Compact: 
 func (m Model) newView(s string) tea.View {
 	v := tea.NewView(s)
 	v.AltScreen = true
+	if !m.cfg.NoMouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
@@ -584,7 +596,8 @@ func (m Model) View() tea.View {
 	}
 	var b strings.Builder
 	if m.cfg.List && m.shown != nil {
-		for _, line := range m.listRows() {
+		rows, _ := m.listRows()
+		for _, line := range rows {
 			b.WriteString(line + "\n")
 		}
 	} else {
@@ -598,19 +611,21 @@ func (m Model) View() tea.View {
 }
 
 // listRows fills the graph area with the tickets grouped by state, a
-// heading over each group, scrolled so the selection is in view.
-func (m Model) listRows() []string {
+// heading over each group, scrolled so the selection is in view. It also
+// returns the ticket on each row, or 0 for a heading or blank.
+func (m Model) listRows() ([]string, []int) {
 	count := map[wayfinder.State]int{}
 	for _, t := range m.shown.Tickets {
 		count[t.State]++
 	}
 	var rows []string
+	var numbers []int
 	at := 0
 	ts := listOrder(m.shown)
 	for i, t := range ts {
 		if i == 0 || t.State != ts[i-1].State {
 			heading := truncate(fmt.Sprintf("%s (%d)", t.State, count[t.State]), m.cols-3)
-			rows = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m")
+			rows, numbers = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m"), append(numbers, 0)
 		}
 		row := fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title)
 		if t.Number == m.sel {
@@ -619,11 +634,13 @@ func (m Model) listRows() []string {
 		} else {
 			rows = append(rows, truncate("  "+row, m.cols))
 		}
+		numbers = append(numbers, t.Number)
 	}
 	fit := max(0, m.graphRows())
 	from := max(0, at-fit+1)
-	rows = rows[from:min(len(rows), from+fit)]
-	return append(rows, make([]string, fit-len(rows))...)
+	to := min(len(rows), from+fit)
+	rows, numbers = rows[from:to], numbers[from:to]
+	return append(rows, make([]string, fit-len(rows))...), append(numbers, make([]int, fit-len(numbers))...)
 }
 
 // picker is a header, a row per map with the cursor's in bold, a hint
