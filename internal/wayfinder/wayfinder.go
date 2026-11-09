@@ -93,6 +93,33 @@ func (m *Map) Blocks(n int) []int {
 	return out
 }
 
+// MiniMap is the map filtered to ticket n and its direct neighbours on the
+// map, the tickets it is blocked by and those it blocks, with every edge
+// between them. It shares its tickets with m, and has no warnings.
+func (m *Map) MiniMap(n int) *Map {
+	in := map[int]bool{n: true}
+	for _, e := range m.Edges {
+		if e.To == n {
+			in[e.From] = true
+		}
+		if e.From == n {
+			in[e.To] = true
+		}
+	}
+	mini := &Map{Repo: m.Repo, Number: m.Number, Title: m.Title, Closed: m.Closed}
+	for _, t := range m.Tickets {
+		if in[t.Number] {
+			mini.Tickets = append(mini.Tickets, t)
+		}
+	}
+	for _, e := range m.Edges {
+		if in[e.From] && in[e.To] {
+			mini.Edges = append(mini.Edges, e)
+		}
+	}
+	return mini
+}
+
 // Ticket returns the map's ticket with this number, or nil.
 func (m *Map) Ticket(n int) *Ticket {
 	i, ok := slices.BinarySearchFunc(m.Tickets, n, func(t *Ticket, n int) int { return t.Number - n })
