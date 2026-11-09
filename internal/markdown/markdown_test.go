@@ -167,3 +167,37 @@ func TestEmptyBody(t *testing.T) {
 		t.Errorf("an empty body rendered %q", lines)
 	}
 }
+
+// The n-th image in the markdown, ![]() or <img>, takes the n-th <img src>
+// in the body's HTML, which carries the signed URLs; images in code don't
+// count on either side.
+func TestImagesTakeTheirURLsFromTheBodyHTML(t *testing.T) {
+	body := "![a shot](https://github.com/user-attachments/assets/1)\n\n" +
+		"`![not](an image)` and\n\n```\n<img src=\"nor this\">\n```\n\n" +
+		`<img width="600" height="300" alt="a diagram" src="https://github.com/user-attachments/assets/2">`
+	html := `<p><a href="https://private-user-images.githubusercontent.com/1/a.png?jwt=x"><img src="https://private-user-images.githubusercontent.com/1/a.png?jwt=x" alt="a shot"></a></p>
+<p><code>![not](an image)</code> and</p><pre><code>&lt;img src="nor this"&gt;</code></pre>
+<p><img width="600" height="300" alt="a diagram" src="https://camo.githubusercontent.com/abc?u=1&amp;v=2" style="max-width: 100%;"></p>`
+	want := []markdown.Image{
+		{Alt: "a shot", URL: "https://private-user-images.githubusercontent.com/1/a.png?jwt=x"},
+		{Alt: "a diagram", URL: "https://camo.githubusercontent.com/abc?u=1&v=2", Width: 600, Height: 300},
+	}
+	if got := markdown.Images(body, html); !slices.Equal(got, want) {
+		t.Errorf("Images =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// If the counts differ the images can't be told apart, so none has a URL.
+func TestImagesHaveNoURLsIfTheCountsDiffer(t *testing.T) {
+	body := "![one](https://example.com/1.png) ![two](https://example.com/2.png)"
+	for _, html := range []string{
+		`<img src="https://camo.githubusercontent.com/1">`,
+		`<img src="https://camo.githubusercontent.com/1"><img src="https://camo.githubusercontent.com/2"><img src="https://camo.githubusercontent.com/3">`,
+		"",
+	} {
+		want := []markdown.Image{{Alt: "one"}, {Alt: "two"}}
+		if got := markdown.Images(body, html); !slices.Equal(got, want) {
+			t.Errorf("Images with HTML %q = %+v, want no URLs", html, got)
+		}
+	}
+}

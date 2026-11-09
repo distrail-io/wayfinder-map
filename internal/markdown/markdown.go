@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -32,6 +33,39 @@ func Render(src string, width int) []string {
 	return r.block(md.Parser().Parse(text.NewReader(r.src)), max(width, 1))
 }
 
+// Image is one of a body's images.
+type Image struct {
+	Alt string
+	// URL is the image's signed URL from the body's HTML, or empty if the
+	// body's HTML doesn't match.
+	URL string
+	// Width and Height are the size its <img> tag asks for, in pixels, or
+	// 0 if it doesn't.
+	Width, Height int
+}
+
+// Images lists a body's images in order: each ![]() and each <img>, but
+// none in code. The n-th takes its URL from the n-th <img src> in the
+// body's HTML, which GitHub signs so that a private repo's images load
+// without a login. If the counts differ, which image is which is unknown,
+// so none has a URL.
+func Images(src, bodyHTML string) []Image {
+	r := &renderer{src: []byte(presanitise(src))}
+	r.block(md.Parser().Parse(text.NewReader(r.src)), 80)
+	var urls []string
+	for _, m := range tag.FindAllStringSubmatch(comment.ReplaceAllString(bodyHTML, ""), -1) {
+		if strings.EqualFold(m[2], "img") {
+			urls = append(urls, attr(m[3], "src"))
+		}
+	}
+	if len(urls) == len(r.images) {
+		for i := range r.images {
+			r.images[i].URL = urls[i]
+		}
+	}
+	return r.images
+}
+
 // presanitise removes escape sequences whole before parsing, which could
 // otherwise split one across text nodes and leave its tail as text. It
 // keeps the line breaks and tabs that markdown's structure rests on. Each
@@ -48,7 +82,10 @@ func presanitise(src string) string {
 	return strings.Join(lines, "\n")
 }
 
-type renderer struct{ src []byte }
+type renderer struct {
+	src    []byte
+	images []Image // the images met so far
+}
 
 // block renders a block node in width cells.
 func (r *renderer) block(n ast.Node, width int) []string {
@@ -80,11 +117,16 @@ func (r *renderer) block(n ast.Node, width int) []string {
 		if n.HasClosure() {
 			b.Write(n.ClosureLine.Value(r.src))
 		}
+		// Each of its lines wraps on its own.
 		var lines []string
-		for _, l := range strings.Split(reduceHTML(b.String()), "\n") {
-			if l = strings.TrimSpace(l); l != "" {
-				lines = append(lines, wrap([]span{{text: l}}, width)...)
+		var line []span
+		for _, s := range append(r.reduceHTML(b.String(), style{}), span{br: true}) {
+			if !s.br {
+				line = append(line, s)
+				continue
 			}
+			lines = append(lines, wrap(line, width)...)
+			line = nil
 		}
 		return lines
 	case *east.Table:
@@ -310,21 +352,14 @@ func (r *renderer) inline(n ast.Node, st style) []span {
 		for _, s := range r.inlines(n, style{}) {
 			alt.WriteString(s.text)
 		}
-		return []span{{text: placeholder(alt.String()), st: st}}
+		return []span{r.image(Image{Alt: alt.String()}, st)}
 	case *ast.RawHTML:
 		var b strings.Builder
 		for i := range n.Segments.Len() {
 			seg := n.Segments.At(i)
 			b.Write(seg.Value(r.src))
 		}
-		var out []span
-		for i, part := range strings.Split(reduceHTML(b.String()), "\n") {
-			if i > 0 {
-				out = append(out, span{br: true})
-			}
-			out = append(out, span{text: part, st: st})
-		}
-		return out
+		return r.reduceHTML(b.String(), st)
 	case *east.TaskCheckBox:
 		return nil // the list item shows it in place of its bullet
 	}
@@ -344,48 +379,75 @@ func safeURL(url string) string {
 	return ""
 }
 
-func placeholder(alt string) string {
-	if alt = strings.TrimSpace(alt); alt == "" {
+// image is the body's next image, shown as a 🖼 placeholder with its alt
+// text.
+func (r *renderer) image(im Image, st style) span {
+	im.Alt = strings.TrimSpace(im.Alt)
+	r.images = append(r.images, im)
+	alt := im.Alt
+	if alt == "" {
 		alt = "image"
 	}
-	return "🖼 " + alt
+	return span{text: "🖼 " + alt, st: st}
 }
 
 var (
 	comment = regexp.MustCompile(`(?s)<!--.*?(-->|$)`)
 	tag     = regexp.MustCompile(`(?s)<(/?)([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>`)
-	altAttr = regexp.MustCompile(`(?i)\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	attrs   = regexp.MustCompile(`(?i)(?:^|\s)([a-z][a-z0-9-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 )
+
+// attr is the value of a tag's attribute, unescaped, or empty.
+func attr(tagAttrs, name string) string {
+	for _, a := range attrs.FindAllStringSubmatch(tagAttrs, -1) {
+		if strings.EqualFold(a[1], name) {
+			return html.UnescapeString(a[2] + a[3] + a[4])
+		}
+	}
+	return ""
+}
+
+// size is a tag's attribute as a whole number of pixels, or 0.
+func size(tagAttrs, name string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(attr(tagAttrs, name)))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
 
 // lineTags are the HTML elements whose ends start a new line.
 var lineTags = map[string]bool{"br": true, "p": true, "div": true, "li": true, "tr": true, "summary": true,
 	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "details": true, "table": true}
 
-// reduceHTML reduces raw HTML to its sanitised text: comments and tags go,
-// an <img> becomes a placeholder with its alt text, and the elements that
-// end a line end one.
-func reduceHTML(s string) string {
+// reduceHTML reduces raw HTML to spans of its sanitised text in style st:
+// comments and tags go, an <img> becomes an image, and line breaks, and the
+// elements that end a line, end one.
+func (r *renderer) reduceHTML(s string, st style) []span {
 	s = comment.ReplaceAllString(s, "")
-	s = tag.ReplaceAllStringFunc(s, func(t string) string {
-		m := tag.FindStringSubmatch(t)
-		name := strings.ToLower(m[2])
+	var out []span
+	text := func(t string) {
+		for i, l := range strings.Split(html.UnescapeString(t), "\n") {
+			if i > 0 {
+				out = append(out, span{br: true})
+			}
+			out = append(out, span{text: clean(l), st: st})
+		}
+	}
+	at := 0
+	for _, m := range tag.FindAllStringSubmatchIndex(s, -1) {
+		text(s[at:m[0]])
+		at = m[1]
+		name, a := strings.ToLower(s[m[4]:m[5]]), s[m[6]:m[7]]
 		switch {
 		case name == "img":
-			alt := ""
-			if a := altAttr.FindStringSubmatch(m[3]); a != nil {
-				alt = html.UnescapeString(a[1] + a[2] + a[3])
-			}
-			return placeholder(alt)
-		case name == "br" || (m[1] == "/" && lineTags[name]):
-			return "\n"
+			out = append(out, r.image(Image{Alt: clean(attr(a, "alt")), Width: size(a, "width"), Height: size(a, "height")}, st))
+		case name == "br" || (m[3] > m[2] && lineTags[name]):
+			out = append(out, span{br: true})
 		}
-		return ""
-	})
-	lines := strings.Split(html.UnescapeString(s), "\n")
-	for i, l := range lines {
-		lines[i] = clean(l)
 	}
-	return strings.Join(lines, "\n")
+	text(s[at:])
+	return out
 }
 
 // frag is a run of a word in one style.
