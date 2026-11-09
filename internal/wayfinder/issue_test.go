@@ -18,16 +18,16 @@ func TestParseIssue(t *testing.T) {
 		Type: wayfinder.Task, Labels: []string{"wayfinder:task"},
 		Body:     "Swap the vendored copy for the standalone one.",
 		BodyHTML: `<p dir="auto">Swap the vendored copy for the standalone one.</p>`,
-		Parent:   &wayfinder.Related{Repo: "banked/ask-barry", Number: 214, Title: "Wayfinder: run Sandcastle standalone against any Banked repo"},
+		Parent:   &wayfinder.Related{IssueRef: wayfinder.IssueRef{Repo: "banked/ask-barry", Number: 214}, Title: "Wayfinder: run Sandcastle standalone against any Banked repo"},
 		SubIssues: []wayfinder.Related{
-			{Repo: "banked/ask-barry", Number: 301, Title: "Remove the vendored copy", Closed: true, Type: wayfinder.NoType},
-			{Repo: "banked/ask-barry", Number: 302, Title: "Point CI at the standalone image", Type: wayfinder.NoType},
+			{IssueRef: wayfinder.IssueRef{Repo: "banked/ask-barry", Number: 301}, Title: "Remove the vendored copy", Closed: true, Type: wayfinder.NoType},
+			{IssueRef: wayfinder.IssueRef{Repo: "banked/ask-barry", Number: 302}, Title: "Point CI at the standalone image", Type: wayfinder.NoType},
 		},
 		SubTotal: 2, SubDone: 1,
 		BlockedBy: []wayfinder.Related{
-			{Repo: "banked/ask-barry", Number: 221, Title: "Move Sandcastle into its own home"},
-			{Repo: "other/repo", Number: 9, Title: "Publish the sandbox base image"},
-			{Repo: "banked/ask-barry", Number: 88, Title: "Agree the image registry", Closed: true},
+			{IssueRef: wayfinder.IssueRef{Repo: "banked/ask-barry", Number: 221}, Title: "Move Sandcastle into its own home"},
+			{IssueRef: wayfinder.IssueRef{Repo: "other/repo", Number: 9}, Title: "Publish the sandbox base image"},
+			{IssueRef: wayfinder.IssueRef{Repo: "banked/ask-barry", Number: 88}, Title: "Agree the image registry", Closed: true},
 		},
 	}
 	if !reflect.DeepEqual(is, want) {

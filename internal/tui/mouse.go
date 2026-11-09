@@ -43,7 +43,7 @@ func (m Model) click(x, y int) (tea.Model, tea.Cmd) {
 		}
 		if n != 0 {
 			m.sel = n
-			return m.openDetail(ref{m.shown.Repo, n})
+			return m.openDetail(m.onMap(n))
 		}
 	}
 	return m, nil

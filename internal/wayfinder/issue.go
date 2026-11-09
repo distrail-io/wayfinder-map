@@ -38,8 +38,7 @@ type Issue struct {
 // Related is an issue that another links to: its parent, a sub-issue, a
 // blocker or an issue it blocks.
 type Related struct {
-	Repo   string
-	Number int
+	IssueRef
 	Title  string
 	Closed bool
 
@@ -47,12 +46,6 @@ type Related struct {
 	// labels name. Type is empty for the others.
 	Assignees []string
 	Type      Type
-}
-
-// Ref names the issue as seen from repo: #N, or owner/repo#N when it lives
-// in another repo.
-func (r Related) Ref(repo string) string {
-	return Blocker{Repo: r.Repo, Number: r.Number}.Ref(repo)
 }
 
 // State is the issue's state by the same rule as a ticket's.
@@ -77,7 +70,7 @@ type rawRelated struct {
 }
 
 func (r rawRelated) related() Related {
-	return Related{Repo: Sanitize(r.Repository.NameWithOwner), Number: r.Number, Title: Sanitize(r.Title), Closed: r.State == "CLOSED"}
+	return Related{IssueRef: IssueRef{Sanitize(r.Repository.NameWithOwner), r.Number}, Title: Sanitize(r.Title), Closed: r.State == "CLOSED"}
 }
 
 func relatedOf(rs []rawRelated) []Related {

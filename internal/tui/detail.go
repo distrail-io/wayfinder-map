@@ -16,19 +16,21 @@ import (
 	"github.com/distrail-io/wayfinder-map/internal/wayfinder"
 )
 
-// ref names an issue, which may live outside the map's repo.
-type ref struct {
-	repo   string
-	number int
+// onMap names issue n in the map's repo.
+func (m Model) onMap(n int) wayfinder.IssueRef {
+	return wayfinder.IssueRef{Repo: m.shown.Repo, Number: n}
 }
+
+// isMap reports whether r is the map issue.
+func (m Model) isMap(r wayfinder.IssueRef) bool { return r == m.onMap(m.shown.Number) }
 
 // detail is the detail view's state: where it has been, its cursor and
 // scroll, the mini-map's direction, and the focus issue once fetched.
 type detail struct {
-	stack  []ref      // the back stack; the last is the focus
-	cursor int        // the related issue under the cursor, or -1
-	scroll int        // the first line shown
-	dir    layout.Dir // the mini-map's, LR on opening whatever the map's
+	stack  []wayfinder.IssueRef // the back stack; the last is the focus
+	cursor int                  // the related issue under the cursor, or -1
+	scroll int                  // the first line shown
+	dir    layout.Dir           // the mini-map's, LR on opening whatever the map's
 
 	issue *wayfinder.Issue // the focus, fetched; nil until then
 	body  []string         // the issue's body, rendered to the pane's width
@@ -40,17 +42,17 @@ type detail struct {
 }
 
 type issueMsg struct {
-	ref ref
+	ref wayfinder.IssueRef
 	is  *wayfinder.Issue
 	err error
 }
 
-func (m Model) focus() ref { return m.detail.stack[len(m.detail.stack)-1] }
+func (m Model) focus() wayfinder.IssueRef { return m.detail.stack[len(m.detail.stack)-1] }
 
 // openDetail shows issue r in the detail view, on top of the back stack.
 // The map image would cover it, so it goes.
-func (m Model) openDetail(r ref) (tea.Model, tea.Cmd) {
-	var stack []ref
+func (m Model) openDetail(r wayfinder.IssueRef) (tea.Model, tea.Cmd) {
+	var stack []wayfinder.IssueRef
 	if m.view == detailView {
 		stack = slices.Clip(m.detail.stack)
 	}
@@ -61,7 +63,7 @@ func (m Model) openDetail(r ref) (tea.Model, tea.Cmd) {
 
 // recentre makes the top of stack the focus, fetches it and draws its
 // mini-map. The last focus's images go.
-func (m Model) recentre(stack []ref) (Model, tea.Cmd) {
+func (m Model) recentre(stack []wayfinder.IssueRef) (Model, tea.Cmd) {
 	del := m.deleteBodyImages()
 	m.detail = detail{stack: stack, cursor: -1, dir: m.detail.dir}
 	m, redraw := m.redraw()
@@ -74,8 +76,8 @@ func (m Model) detailBack() (tea.Model, tea.Cmd) {
 	if len(m.detail.stack) > 1 {
 		return m.recentre(m.detail.stack[:len(m.detail.stack)-1])
 	}
-	if f := m.focus(); f.repo == m.shown.Repo && m.shown.Ticket(f.number) != nil {
-		m.sel = f.number
+	if f := m.focus(); m.ticket(f) != nil {
+		m.sel = f.Number
 	}
 	del := m.deleteImages()
 	m.view, m.detail = mapView, detail{}
@@ -87,7 +89,7 @@ func (m Model) detailBack() (tea.Model, tea.Cmd) {
 func (m Model) loadIssue() tea.Cmd {
 	src, r := m.cfg.Source, m.focus()
 	return func() tea.Msg {
-		raw, err := src.LoadIssue(context.Background(), r.repo, r.number)
+		raw, err := src.LoadIssue(context.Background(), r.Repo, r.Number)
 		if err != nil {
 			return issueMsg{ref: r, err: err}
 		}
@@ -126,7 +128,7 @@ func (m Model) detailKey(k string) (tea.Model, tea.Cmd) {
 		return m.detailBack()
 	case "o":
 		f := m.focus()
-		return m, m.open(f.repo, f.number)
+		return m, m.open(f.Repo, f.Number)
 	case "c":
 		m.look = otherLook[m.look]
 		return m.redraw()
@@ -189,7 +191,7 @@ type detailRow struct {
 // the cursor moves through, in the order shown, and the mini-map, if any.
 type detailLayout struct {
 	rows      []detailRow
-	targets   []ref
+	targets   []wayfinder.IssueRef
 	mini      *mini
 	miniAt    int // the row the mini-map's image starts on
 	firstCard int // the target of the mini-map's first card
@@ -203,10 +205,10 @@ func (m Model) detailLayout() detailLayout {
 	f := m.focus()
 	is := m.detail.issue
 	ticket := m.ticket(f)
-	isMap := f.repo == m.shown.Repo && f.number == m.shown.Number
+	isMap := m.isMap(f)
 	mi := m.miniMap()
 	var rows []detailRow
-	var targets []ref
+	var targets []wayfinder.IssueRef
 	add := func(s string) { rows = append(rows, detailRow{ansi.Truncate(s, m.cols, "…"), -1}) }
 	link := func(r wayfinder.Related, state string) {
 		text := r.Ref(m.shown.Repo)
@@ -217,13 +219,13 @@ func (m Model) detailLayout() detailLayout {
 			text += " · " + state
 		}
 		rows = append(rows, detailRow{"  " + text, len(targets)})
-		targets = append(targets, ref{r.Repo, r.Number})
+		targets = append(targets, r.IssueRef)
 	}
 	heading := func(s string) { add("\x1b[1m" + s + "\x1b[0m") }
 	const loading = "loading…"
 
 	// The header.
-	title := wayfinder.Related{Repo: f.repo, Number: f.number}.Ref(m.shown.Repo)
+	title := f.Ref(m.shown.Repo)
 	switch {
 	case is != nil:
 		title += " " + is.Title
@@ -250,15 +252,15 @@ func (m Model) detailLayout() detailLayout {
 	case is != nil:
 		parent = is.Parent
 	case ticket != nil:
-		parent = &wayfinder.Related{Repo: m.shown.Repo, Number: m.shown.Number, Title: m.shown.Title, Closed: m.shown.Closed}
+		parent = &wayfinder.Related{IssueRef: m.onMap(m.shown.Number), Title: m.shown.Title, Closed: m.shown.Closed}
 	}
 	if parent != nil {
 		in := "in "
-		if parent.Repo == m.shown.Repo && parent.Number == m.shown.Number {
+		if m.isMap(parent.IssueRef) {
 			in = "in map "
 		}
 		rows = append(rows, detailRow{ansi.Truncate(in+parent.Ref(m.shown.Repo)+" "+parent.Title, m.cols, "…"), len(targets)})
-		targets = append(targets, ref{parent.Repo, parent.Number})
+		targets = append(targets, parent.IssueRef)
 	}
 
 	// The relationships: blockers the map draws, what it blocks, blockers
@@ -269,15 +271,15 @@ func (m Model) detailLayout() detailLayout {
 		by, blocks = is.BlockedBy, is.Blocking
 	case ticket != nil:
 		for _, b := range ticket.Blockers {
-			by = append(by, m.related(ref{b.Repo, b.Number}, b.Closed))
+			by = append(by, m.related(b.IssueRef, b.Closed))
 		}
-		for _, n := range m.shown.Blocks(f.number) {
-			blocks = append(blocks, m.related(ref{m.shown.Repo, n}, false))
+		for _, n := range m.shown.Blocks(f.Number) {
+			blocks = append(blocks, m.related(m.onMap(n), false))
 		}
 	}
 	var drawn, undrawn []wayfinder.Related
 	for _, b := range by {
-		if m.ticket(ref{b.Repo, b.Number}) != nil {
+		if m.ticket(b.IssueRef) != nil {
 			drawn = append(drawn, b)
 		} else {
 			undrawn = append(undrawn, b)
@@ -314,11 +316,11 @@ func (m Model) detailLayout() detailLayout {
 			rows = append(rows, detailRow{p, -1})
 		}
 		for _, n := range mi.cards {
-			r := m.related(ref{m.shown.Repo, n}, false)
+			r := m.related(m.onMap(n), false)
 			if m.look == draw.Compact {
 				link(r, m.stateOf(r))
 			} else {
-				targets = append(targets, ref{r.Repo, r.Number})
+				targets = append(targets, r.IssueRef)
 			}
 		}
 		sections = sections[3:]
@@ -353,7 +355,7 @@ func (m Model) detailLayout() detailLayout {
 		}
 		heading(fmt.Sprintf("Sub-issues · %d/%d done", done, len(m.shown.Tickets)))
 		for _, t := range m.shown.Tickets {
-			link(wayfinder.Related{Repo: m.shown.Repo, Number: t.Number, Title: t.Title, Closed: t.Closed}, t.State.String()+withType(t.Type))
+			link(wayfinder.Related{IssueRef: m.onMap(t.Number), Title: t.Title, Closed: t.Closed}, t.State.String()+withType(t.Type))
 		}
 		add("")
 	case pending:
@@ -384,7 +386,7 @@ func (m Model) detailLayout() detailLayout {
 
 // facts is the header's line of state, type and assignees. The map issue
 // is just open or closed.
-func (m Model) facts(f ref, is *wayfinder.Issue, t *wayfinder.Ticket, isMap bool) string {
+func (m Model) facts(f wayfinder.IssueRef, is *wayfinder.Issue, t *wayfinder.Ticket, isMap bool) string {
 	var parts []string
 	var typ wayfinder.Type
 	var who []string
@@ -432,16 +434,16 @@ func (m Model) focusRow(name string, t *wayfinder.Ticket, is *wayfinder.Issue) s
 }
 
 // ticket is the map's ticket that r names, or nil.
-func (m Model) ticket(r ref) *wayfinder.Ticket {
-	if r.repo != m.shown.Repo {
+func (m Model) ticket(r wayfinder.IssueRef) *wayfinder.Ticket {
+	if r.Repo != m.shown.Repo {
 		return nil
 	}
-	return m.shown.Ticket(r.number)
+	return m.shown.Ticket(r.Number)
 }
 
 // related is r as far as the map knows it: its title only if on the map.
-func (m Model) related(r ref, closed bool) wayfinder.Related {
-	out := wayfinder.Related{Repo: r.repo, Number: r.number, Closed: closed}
+func (m Model) related(r wayfinder.IssueRef, closed bool) wayfinder.Related {
+	out := wayfinder.Related{IssueRef: r, Closed: closed}
 	if t := m.ticket(r); t != nil {
 		out.Title, out.Closed = t.Title, t.Closed
 	}
@@ -451,7 +453,7 @@ func (m Model) related(r ref, closed bool) wayfinder.Related {
 // stateOf is a related issue's state on the map, else closed, claimed if
 // it is known to be assigned, or open.
 func (m Model) stateOf(r wayfinder.Related) string {
-	switch t := m.ticket(ref{r.Repo, r.Number}); {
+	switch t := m.ticket(r.IssueRef); {
 	case t != nil:
 		return t.State.String()
 	case r.Closed:
@@ -504,7 +506,7 @@ func (m Model) detailStatus() string {
 		rank int
 	}
 	const kept = 7
-	hints := []hint{{wayfinder.Related{Repo: f.repo, Number: f.number}.Ref(m.shown.Repo), kept},
+	hints := []hint{{f.Ref(m.shown.Repo), kept},
 		{"tab select", 6}, {"enter open", 5}, {"b back", kept}, {"o browser", 2}, {"c look: " + m.look.String(), 4}}
 	if m.images() { // only the mini-map has a direction
 		hints = append(hints, hint{"d dir: " + m.detail.dir.String(), 3})

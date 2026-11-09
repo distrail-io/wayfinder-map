@@ -37,20 +37,25 @@ const (
 	NoType    Type = "?"
 )
 
-// Blocker is a ticket that another is blocked by; it may live in another repo.
-type Blocker struct {
+// IssueRef names an issue, which may live in another repo than the map's.
+type IssueRef struct {
 	Repo   string
 	Number int
-	Closed bool
 }
 
-// Ref names the blocker as seen from a map in mapRepo: #N, or owner/repo#N
-// when it lives in another repo.
-func (b Blocker) Ref(mapRepo string) string {
-	if b.Repo != mapRepo {
-		return fmt.Sprintf("%s#%d", b.Repo, b.Number)
+// Ref names the issue as seen from repo: #N, or owner/repo#N when it lives
+// in another repo.
+func (r IssueRef) Ref(repo string) string {
+	if r.Repo != repo {
+		return fmt.Sprintf("%s#%d", r.Repo, r.Number)
 	}
-	return fmt.Sprintf("#%d", b.Number)
+	return fmt.Sprintf("#%d", r.Number)
+}
+
+// Blocker is a ticket that another is blocked by; it may live in another repo.
+type Blocker struct {
+	IssueRef
+	Closed bool
 }
 
 type Ticket struct {
@@ -228,7 +233,7 @@ func Parse(raw []byte) (*Map, error) {
 		t := &Ticket{Number: n.Number, Title: Sanitize(n.Title), Closed: n.State == "CLOSED"}
 		t.Type, t.Assignees = typeOf(n.Labels.names()), n.Assignees.logins()
 		for _, b := range n.BlockedBy.Nodes {
-			t.Blockers = append(t.Blockers, Blocker{Sanitize(b.Repository.NameWithOwner), b.Number, b.State == "CLOSED"})
+			t.Blockers = append(t.Blockers, Blocker{IssueRef{Sanitize(b.Repository.NameWithOwner), b.Number}, b.State == "CLOSED"})
 		}
 		if n.BlockedBy.PageInfo.HasNextPage {
 			moreBlockers = append(moreBlockers, n.Number)

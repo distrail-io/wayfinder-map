@@ -425,7 +425,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if k == "m" {
-		return m.openDetail(ref{m.shown.Repo, m.shown.Number})
+		return m.openDetail(m.onMap(m.shown.Number))
 	}
 	if m.sel == 0 {
 		return m, nil
@@ -434,7 +434,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	case "o":
 		return m, m.open(m.shown.Repo, m.sel)
 	case "enter", "space":
-		return m.openDetail(ref{m.shown.Repo, m.sel})
+		return m.openDetail(m.onMap(m.sel))
 	}
 	if m.cfg.List {
 		return m.listKey(k)
