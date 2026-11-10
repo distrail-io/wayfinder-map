@@ -116,6 +116,23 @@ func TestClickingTheBannerOpensTheMap(t *testing.T) {
 	}
 }
 
+// The compact banner is a pill: a click just outside its rounded end, in
+// the corner of the box around it, misses it, as a click beside a compact
+// ticket's circle misses that; a click inside the end opens the map. In a
+// 100×30 pane the pill spans cells 41 to 58 across and 8 to 11 down.
+func TestClickingBesideTheCompactBannersRoundEndMissesIt(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{1: lone()}}
+	a := startWith(t, src, tui.Config{Number: 1, Look: draw.Compact}).sized()
+	a.click(41, 8)
+	if len(src.issueLoaded) != 0 {
+		t.Fatalf("a click beside the pill's rounded end opened %v", src.issueLoaded)
+	}
+	a.click(42, 9)
+	if !slices.Equal(src.issueLoaded, []string{"a/b#1"}) {
+		t.Errorf("a click inside the pill's rounded end opened %v, want the map a/b#1", src.issueLoaded)
+	}
+}
+
 func TestClickingAListRowOpensIt(t *testing.T) {
 	a, src := ask(t, "map-edge-cases.json", tui.Config{List: true})
 	a.click(10, a.row("blocked (4)"))
