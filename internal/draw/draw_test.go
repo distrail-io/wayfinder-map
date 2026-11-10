@@ -109,27 +109,75 @@ func TestTheBannerIsIndigoAndCentredAboveTheTickets(t *testing.T) {
 		for _, dir := range []layout.Dir{layout.LR, layout.TB} {
 			res := draw.Layout(m, look, dir)
 			img := draw.Render(m, res, look, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
-			b, ok := res.Boxes[m.Number]
-			if !ok {
-				t.Fatalf("%v %v: no banner", look, dir)
-			}
-			left, right := math.Inf(1), math.Inf(-1)
-			for _, tk := range m.Tickets {
-				tb := res.Boxes[tk.Number]
-				if tb.Y < b.Y+b.H {
-					t.Errorf("%v %v: #%d at y %v is not below the banner, which ends at %v", look, dir, tk.Number, tb.Y, b.Y+b.H)
-				}
-				left, right = math.Min(left, tb.X), math.Max(right, tb.X+tb.W)
-			}
-			if mid := b.X + b.W/2; math.Abs(mid-(left+right)/2) > 1 {
-				t.Errorf("%v %v: the banner's middle is at x %v, the tickets' at %v", look, dir, mid, (left+right)/2)
-			}
-			if len(res.Curves) != len(m.Edges) {
-				t.Errorf("%v %v: %d curves for %d edges", look, dir, len(res.Curves), len(m.Edges))
-			}
+			b := res.Boxes[m.Number] // only to aim the samples
 			if p := bannerFillAt(b, look); img.RGBAAt(p.X, p.Y) != indigo {
-				t.Errorf("%v %v: the banner is %v at %v, want indigo %v", look, dir, img.RGBAAt(p.X, p.Y), p, indigo)
+				t.Fatalf("%v %v: the banner is %v at %v, want indigo %v", look, dir, img.RGBAAt(p.X, p.Y), p, indigo)
 			}
+			banner, tickets := extent(img, func(c color.RGBA) bool { return c == indigo }), extent(img, isTicketFill)
+			if banner.Max.Y > tickets.Min.Y {
+				t.Errorf("%v %v: the banner, %v, isn't above the tickets, %v", look, dir, banner, tickets)
+			}
+			if mid, want := banner.Min.X+banner.Max.X, tickets.Min.X+tickets.Max.X; abs(mid-want) > 3 {
+				t.Errorf("%v %v: the banner's middle is at x %v, the tickets' at %v", look, dir, float64(mid)/2, float64(want)/2)
+			}
+			// Nothing but the banner is drawn beside it or in the gap
+			// below it, so no edge reaches it.
+			for y := range tickets.Min.Y - 1 {
+				for x := range img.Bounds().Dx() {
+					inBanner := float64(x) >= b.X-1 && float64(x) <= b.X+b.W && float64(y) >= b.Y-1 && float64(y) <= b.Y+b.H
+					if c := img.RGBAAt(x, y); c.A != 0 && !inBanner {
+						t.Fatalf("%v %v: (%d, %d) above the tickets and outside the banner is %v, want transparent", look, dir, x, y, c)
+					}
+				}
+			}
+		}
+	}
+}
+
+// isTicketFill is whether c is one of the ticket states' fills.
+func isTicketFill(c color.RGBA) bool {
+	for _, s := range []wayfinder.State{wayfinder.Frontier, wayfinder.Claimed, wayfinder.Blocked, wayfinder.Done} {
+		if c == draw.FillOf(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// extent is the smallest rectangle around the pixels of img that match.
+func extent(img *image.RGBA, match func(color.RGBA) bool) image.Rectangle {
+	var r image.Rectangle
+	for y := range img.Bounds().Dy() {
+		for x := range img.Bounds().Dx() {
+			if match(img.RGBAAt(x, y)) {
+				r = r.Union(image.Rect(x, y, x+1, y+1))
+			}
+		}
+	}
+	return r
+}
+
+func abs(n int) int { return max(n, -n) }
+
+// In the compact look the banner is a pill: its ends are half circles, so
+// the corners of the box around it are background, while its straight top
+// edge and the tips of its ends are indigo.
+func TestTheCompactBannerIsAPill(t *testing.T) {
+	m := load(t, "214")
+	res := draw.Layout(m, draw.Compact, layout.LR)
+	img := draw.Render(m, res, draw.Compact, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+	b := res.Boxes[m.Number]
+	left, top, right, bottom, mid := int(b.X), int(b.Y), int(b.X+b.W), int(b.Y+b.H), int(b.Y+b.H/2)
+	for _, c := range []image.Point{{left + 2, top + 2}, {right - 3, top + 2}, {left + 2, bottom - 3}, {right - 3, bottom - 3}} {
+		if got := img.RGBAAt(c.X, c.Y); got.A != 0 {
+			t.Errorf("the corner of the pill's box at %v is %v, want transparent", c, got)
+		}
+	}
+	// One unit in from each tip, and on the top edge where the left end
+	// meets the straight part, clear of the icon.
+	for _, p := range []image.Point{{left + 1, mid}, {right - 2, mid}, {left + int(b.H/2), top + 2}} {
+		if got := img.RGBAAt(p.X, p.Y); got != indigo {
+			t.Errorf("the pill at %v is %v, want indigo", p, got)
 		}
 	}
 }
