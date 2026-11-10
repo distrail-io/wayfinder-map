@@ -77,9 +77,9 @@ func (m Model) detailBack() (tea.Model, tea.Cmd) {
 }
 
 // leaveDetail goes back to the map, however far the view has walked, with
-// the focus selected if it is on the map.
+// the focus selected if it is on the map, or the banner if it is the map.
 func (m Model) leaveDetail() (tea.Model, tea.Cmd) {
-	if f := m.focus(); m.ticket(f) != nil {
+	if f := m.focus(); m.ticket(f) != nil || m.isMap(f) {
 		m.sel = f.Number
 	}
 	del := m.deleteImages()

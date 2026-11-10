@@ -90,6 +90,148 @@ func TestSelectedTicketHasAYellowRing(t *testing.T) {
 	}
 }
 
+var indigo = color.RGBA{0x5b, 0x4b, 0xc4, 0xff}
+
+// bannerFillAt is a point inside the banner b, clear of its icon and text:
+// near a card's bottom-right corner, or below the middle of a pill.
+func bannerFillAt(b layout.Rect, look draw.Look) image.Point {
+	if look == draw.Compact {
+		return image.Pt(int(b.X+b.W/2), int(b.Y+b.H)-3)
+	}
+	return image.Pt(int(b.X+b.W)-12, int(b.Y+b.H)-4)
+}
+
+// The banner stands for the map: a box centred above its tickets, in a
+// colour no ticket state uses, with no edges.
+func TestTheBannerIsIndigoAndCentredAboveTheTickets(t *testing.T) {
+	m := load(t, "214")
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		for _, dir := range []layout.Dir{layout.LR, layout.TB} {
+			res := draw.Layout(m, look, dir)
+			img := draw.Render(m, res, look, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+			b := res.Boxes[m.Number] // only to aim the samples
+			if p := bannerFillAt(b, look); img.RGBAAt(p.X, p.Y) != indigo {
+				t.Fatalf("%v %v: the banner is %v at %v, want indigo %v", look, dir, img.RGBAAt(p.X, p.Y), p, indigo)
+			}
+			banner, tickets := extent(img, func(c color.RGBA) bool { return c == indigo }), extent(img, isTicketFill)
+			if banner.Max.Y > tickets.Min.Y {
+				t.Errorf("%v %v: the banner, %v, isn't above the tickets, %v", look, dir, banner, tickets)
+			}
+			if mid, want := banner.Min.X+banner.Max.X, tickets.Min.X+tickets.Max.X; abs(mid-want) > 3 {
+				t.Errorf("%v %v: the banner's middle is at x %v, the tickets' at %v", look, dir, float64(mid)/2, float64(want)/2)
+			}
+			// Nothing but the banner is drawn beside it or in the gap
+			// below it, so no edge reaches it.
+			for y := range tickets.Min.Y - 1 {
+				for x := range img.Bounds().Dx() {
+					inBanner := float64(x) >= b.X-1 && float64(x) <= b.X+b.W && float64(y) >= b.Y-1 && float64(y) <= b.Y+b.H
+					if c := img.RGBAAt(x, y); c.A != 0 && !inBanner {
+						t.Fatalf("%v %v: (%d, %d) above the tickets and outside the banner is %v, want transparent", look, dir, x, y, c)
+					}
+				}
+			}
+		}
+	}
+}
+
+// isTicketFill is whether c is one of the ticket states' fills.
+func isTicketFill(c color.RGBA) bool {
+	for _, s := range []wayfinder.State{wayfinder.Frontier, wayfinder.Claimed, wayfinder.Blocked, wayfinder.Done} {
+		if c == draw.FillOf(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// extent is the smallest rectangle around the pixels of img that match.
+func extent(img *image.RGBA, match func(color.RGBA) bool) image.Rectangle {
+	var r image.Rectangle
+	for y := range img.Bounds().Dy() {
+		for x := range img.Bounds().Dx() {
+			if match(img.RGBAAt(x, y)) {
+				r = r.Union(image.Rect(x, y, x+1, y+1))
+			}
+		}
+	}
+	return r
+}
+
+func abs(n int) int { return max(n, -n) }
+
+// In the compact look the banner is a pill: its ends are half circles, so
+// the corners of the box around it are background, while its straight top
+// edge and the tips of its ends are indigo.
+func TestTheCompactBannerIsAPill(t *testing.T) {
+	m := load(t, "214")
+	res := draw.Layout(m, draw.Compact, layout.LR)
+	img := draw.Render(m, res, draw.Compact, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+	b := res.Boxes[m.Number]
+	left, top, right, bottom, mid := int(b.X), int(b.Y), int(b.X+b.W), int(b.Y+b.H), int(b.Y+b.H/2)
+	for _, c := range []image.Point{{left + 2, top + 2}, {right - 3, top + 2}, {left + 2, bottom - 3}, {right - 3, bottom - 3}} {
+		if got := img.RGBAAt(c.X, c.Y); got.A != 0 {
+			t.Errorf("the corner of the pill's box at %v is %v, want transparent", c, got)
+		}
+	}
+	// One unit in from each tip, and on the top edge where the left end
+	// meets the straight part, clear of the icon.
+	for _, p := range []image.Point{{left + 1, mid}, {right - 2, mid}, {left + int(b.H/2), top + 2}} {
+		if got := img.RGBAAt(p.X, p.Y); got != indigo {
+			t.Errorf("the pill at %v is %v, want indigo", p, got)
+		}
+	}
+}
+
+func TestAClosedMapsBannerIsInTheDoneFill(t *testing.T) {
+	m := load(t, "edge-cases")
+	if !m.Closed {
+		t.Fatal("the edge-cases map should be closed")
+	}
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := draw.Layout(m, look, layout.LR)
+		img := draw.Render(m, res, look, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+		p := bannerFillAt(res.Boxes[m.Number], look)
+		if got, want := img.RGBAAt(p.X, p.Y), draw.FillOf(wayfinder.Done); got != want {
+			t.Errorf("%v: the closed map's banner is %v, want the done fill %v", look, got, want)
+		}
+	}
+}
+
+func TestTheSelectedBannerHasAYellowRing(t *testing.T) {
+	m := load(t, "214")
+	yellow := color.RGBA{0xff, 0xd3, 0x3d, 0xff}
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := draw.Layout(m, look, layout.TB)
+		W, H := int(math.Ceil(res.W)), int(math.Ceil(res.H))
+		b := res.Boxes[m.Number]
+		// Two units left of the banner, halfway down: in the ring's band.
+		x, y := int(b.X)-2, int(b.Y+b.H/2)
+		if got := draw.Render(m, res, look, m.Number, 0, W, H, 1).RGBAAt(x, y); got != yellow {
+			t.Errorf("%v: beside the selected banner is %v, want yellow", look, got)
+		}
+		if got := draw.Render(m, res, look, 218, 0, W, H, 1).RGBAAt(x, y); got == yellow {
+			t.Errorf("%v: the banner has a ring while #218 is selected", look)
+		}
+	}
+}
+
+// The mini-map shows a ticket and its neighbours only: its layout has no
+// banner, so none is drawn.
+func TestTheMiniMapHasNoBanner(t *testing.T) {
+	m := load(t, "214").MiniMap(220)
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := layout.Layered(draw.Graph(m, look), layout.LR)
+		img := draw.Render(m, res, look, m.Number, 220, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+		for y := range img.Bounds().Dy() {
+			for x := range img.Bounds().Dx() {
+				if near(img.RGBAAt(x, y), indigo) {
+					t.Fatalf("%v: the mini-map has the banner's indigo at (%d, %d)", look, x, y)
+				}
+			}
+		}
+	}
+}
+
 // The focus ticket has a double border in its own colour, a style the map
 // never uses, so it isn't mistaken for the selection's yellow ring.
 func TestTheFocusTicketHasADoubleBorder(t *testing.T) {
@@ -136,7 +278,7 @@ func TestGoldens(t *testing.T) {
 
 func goldenMap(t *testing.T, name string, look draw.Look, dir layout.Dir) {
 	m := load(t, name)
-	res := layout.Layered(draw.Graph(m, look), dir)
+	res := draw.Layout(m, look, dir)
 	sel := 0
 	for _, tk := range m.Tickets {
 		if tk.State == wayfinder.Frontier {

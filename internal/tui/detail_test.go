@@ -53,13 +53,53 @@ func (a *app) row(s string) int {
 // contains s.
 func (a *app) tabTo(s string) {
 	a.t.Helper()
+	a.tabUntil(fmt.Sprintf("%q", s), func() bool {
+		l := a.row("› ")
+		return l >= 0 && strings.Contains(a.lines()[l], s)
+	})
+}
+
+// tabToSelect tabs round the map until ticket or banner n is selected.
+func (a *app) tabToSelect(n int) {
+	a.t.Helper()
+	a.tabUntil(fmt.Sprintf("#%d", n), func() bool { return a.selected() == n })
+}
+
+// tabUntil presses tab until reached holds, and fails the test, naming
+// what it was after, if it never does.
+func (a *app) tabUntil(what string, reached func() bool) {
+	a.t.Helper()
 	for range 30 {
 		a.key("tab")
-		if l := a.row("› "); l >= 0 && strings.Contains(a.lines()[l], s) {
+		if reached() {
 			return
 		}
 	}
-	a.t.Fatalf("tab never reached %q:\n%s", s, a.view())
+	a.t.Fatalf("tab never reached %s:\n%s", what, a.view())
+}
+
+// The banner opens the map as a ticket opens itself: enter and space show
+// the map's detail view, esc comes back to the banner, and o opens the map
+// in the browser.
+func TestTheBannerOpensTheMap(t *testing.T) {
+	for _, k := range []string{"enter", "space"} {
+		t.Run(k, func(t *testing.T) {
+			a, src := ask(t, "map-214.json", tui.Config{})
+			a.tabToSelect(214)
+			a.key(k)
+			if !slices.Equal(src.issueLoaded, []string{"banked/ask-barry#214"}) || !a.has("esc map") {
+				t.Fatalf("%s on the banner opened %v:\n%s", k, src.issueLoaded, a.view())
+			}
+			a.key("esc")
+			if a.selected() != 214 {
+				t.Errorf("back on the map, #%d is selected, want the banner #214", a.selected())
+			}
+			a.key("o")
+			if want := []string{"https://github.com/banked/ask-barry/issues/214"}; !slices.Equal(a.opened, want) {
+				t.Errorf("o on the banner opened %q, want %q", a.opened, want)
+			}
+		})
+	}
 }
 
 func TestEnterAndSpaceOpenTheDetailView(t *testing.T) {
@@ -335,8 +375,8 @@ func TestScrollingTheDetailView(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		body = append(body, fmt.Sprintf("Paragraph %d.", i))
 	}
-	src := &fakeSource{maps: map[int][]byte{1: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2, "Two", strings.Join(body, "\n\n"))}}
-	a := start(t, src, 1)
+	src := &fakeSource{maps: map[int][]byte{100: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2, "Two", strings.Join(body, "\n\n"))}}
+	a := start(t, src, 100)
 	a.send(tea.WindowSizeMsg{Width: 60, Height: 20})
 	a.key("right")
 	a.key("enter")
@@ -412,16 +452,17 @@ func TestTheDetailViewInListMode(t *testing.T) {
 	if !slices.Equal(src.issueLoaded, want) {
 		t.Errorf("loaded %v, want %v", src.issueLoaded, want)
 	}
-	if a.selected() != 218 {
-		t.Errorf("back on the list, #%d is selected, want #218", a.selected())
+	// Leaving the map issue selects the map's row.
+	if a.selected() != 214 {
+		t.Errorf("back on the list, #%d is selected, want the map #214", a.selected())
 	}
 }
 
 // No string from GitHub reaches the terminal with its escape sequences.
 func TestTheDetailViewIsSanitised(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2,
+	src := &fakeSource{maps: map[int][]byte{100: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2,
 		"T\x1b]52;c;ZXZpbA==\x07wo", "body \x1b[2J here\n\n`code \x1b]0;title\x07`\n\n[li\x1b[5mnk](https://example.com)")}}
-	a := start(t, src, 1).sized()
+	a := start(t, src, 100).sized()
 	a.key("right")
 	a.key("enter")
 	v := a.view()

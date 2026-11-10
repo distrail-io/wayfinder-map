@@ -52,22 +52,35 @@ func (m Model) ticketAt(x, y int) int {
 }
 
 // hit is the ticket of mp under cell (x, y) of an image of its layout res,
-// or 0. It places the boxes with tr, as Render draws them; a compact
-// ticket is the circle, not the square around it.
+// or the map's number for its banner, or 0. It places the boxes with tr, as
+// Render draws them; in the compact look a ticket is the circle, not the
+// square around it, and the banner the pill, not the box around it. Only
+// the map's layout has a banner, not a mini-map's.
 func (m Model) hit(mp *wayfinder.Map, res layout.Result, tr draw.Transform, x, y int) int {
-	px, py := (float64(x)+0.5)*float64(m.cellW), (float64(y)+0.5)*float64(m.cellH)
+	p := layout.Point{X: (float64(x) + 0.5) * float64(m.cellW), Y: (float64(y) + 0.5) * float64(m.cellH)}
+	if b, ok := draw.Banner(mp, res); ok && m.within(tr.Rect(b), p) {
+		return mp.Number
+	}
 	for _, t := range mp.Tickets {
-		b := tr.Rect(res.Boxes[t.Number])
-		if m.look == draw.Compact {
-			r := b.W / 2
-			if dx, dy := px-(b.X+r), py-(b.Y+b.H/2); dx*dx+dy*dy <= r*r {
-				return t.Number
-			}
-		} else if px >= b.X && px < b.X+b.W && py >= b.Y && py < b.Y+b.H {
+		if m.within(tr.Rect(res.Boxes[t.Number]), p) {
 			return t.Number
 		}
 	}
 	return 0
+}
+
+// within is whether p is in box b as the look draws it: the whole box for
+// cards; for compact, the box with its ends fully rounded, which makes a
+// square box a circle and a wide one a pill.
+func (m Model) within(b layout.Rect, p layout.Point) bool {
+	if m.look != draw.Compact {
+		return p.X >= b.X && p.X < b.X+b.W && p.Y >= b.Y && p.Y < b.Y+b.H
+	}
+	// p's distance from the line through the middle of the pill, end to end.
+	r := min(b.W, b.H) / 2
+	dx := max(b.X+r-p.X, 0, p.X-(b.X+b.W-r))
+	dy := max(b.Y+r-p.Y, 0, p.Y-(b.Y+b.H-r))
+	return dx*dx+dy*dy <= r*r
 }
 
 // wheel scrolls the detail view, or moves the picker's cursor.

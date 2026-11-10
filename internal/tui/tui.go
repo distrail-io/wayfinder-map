@@ -85,7 +85,7 @@ type Model struct {
 	layouts    [2]layout.Result // the shown map in the look, by direction
 	dir        layout.Dir
 	autoDir    bool
-	sel        int // the selected ticket's number
+	sel        int // the selected ticket's number, or the map's for its banner
 	err        error
 	loading    bool
 	cols, rows int
@@ -127,9 +127,10 @@ type (
 const drawDelay = 60 * time.Millisecond
 
 // The strip below the graph: the legend and key hints, then the selected
-// ticket's title over two rows. Then a row for each of the map's warnings,
-// up to maxWarningRows, and the status line last. The strip's height is
-// fixed, so a long title never moves the graph.
+// ticket's or banner's title on one row and its facts on the next. Then a
+// row for each of the map's warnings, up to maxWarningRows, and the status
+// line last. The strip's height is fixed, so a long title never moves the
+// graph.
 const (
 	stripRows      = 3
 	maxWarningRows = 6
@@ -307,21 +308,20 @@ func (m Model) loaded(msg loadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.shown = msg.m
 	m = m.relayout()
-	if m.shown.Ticket(m.sel) == nil {
+	if !slices.Contains(m.stops(m.shown.Tickets), m.sel) {
 		m.sel = firstSelection(m.shown)
 	}
 	m, redraw := m.redraw()
 	return m, tea.Batch(poll, redraw)
 }
 
-// relayout lays the shown map out both ways in the look, then fits it.
-// The list needs no layout.
+// relayout lays the shown map out both ways in the look, with its banner,
+// then fits it. The list needs no layout.
 func (m Model) relayout() Model {
 	if m.cfg.List {
 		return m
 	}
-	g := draw.Graph(m.shown, m.look)
-	m.layouts = [2]layout.Result{layout.LR: layout.Layered(g, layout.LR), layout.TB: layout.Layered(g, layout.TB)}
+	m.layouts = [2]layout.Result{layout.LR: draw.Layout(m.shown, m.look, layout.LR), layout.TB: draw.Layout(m.shown, m.look, layout.TB)}
 	return m.fit()
 }
 
@@ -389,7 +389,8 @@ func (m Model) clear() tea.Cmd {
 	return tea.Raw(kitty.Clear)
 }
 
-// firstSelection is the first frontier ticket, else the first ticket.
+// firstSelection is the first frontier ticket, else the first ticket, else
+// the banner.
 func firstSelection(mp *wayfinder.Map) int {
 	for _, t := range mp.Tickets {
 		if t.State == wayfinder.Frontier {
@@ -399,7 +400,7 @@ func firstSelection(mp *wayfinder.Map) int {
 	if len(mp.Tickets) > 0 {
 		return mp.Tickets[0].Number
 	}
-	return 0
+	return mp.Number
 }
 
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
@@ -459,18 +460,31 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	return m.redraw()
 }
 
-// listKey moves the selection through the list, stopping at its ends.
+// listKey moves the selection through the list, the map's row first,
+// stopping at its ends.
 func (m Model) listKey(k string) (tea.Model, tea.Cmd) {
-	ts := listOrder(m.shown)
-	i := slices.IndexFunc(ts, func(t *wayfinder.Ticket) bool { return t.Number == m.sel })
+	ns := m.stops(listOrder(m.shown))
+	i := slices.Index(ns, m.sel)
 	switch k {
 	case "up", "k", "shift+tab":
 		i = max(i-1, 0)
 	case "down", "j", "tab":
-		i = min(i+1, len(ts)-1)
+		i = min(i+1, len(ns)-1)
 	}
-	m.sel = ts[i].Number
+	m.sel = ns[i]
 	return m, nil
+}
+
+// stops are what the selection can be on, in order: the banner, or the
+// map's row in the list, then tickets ts. A map's number is never one of
+// its tickets'.
+func (m Model) stops(ts []*wayfinder.Ticket) []int {
+	ns := make([]int, 0, 1+len(ts))
+	ns = append(ns, m.shown.Number)
+	for _, t := range ts {
+		ns = append(ns, t.Number)
+	}
+	return ns
 }
 
 // listStates are the list's groups, in order: what can be taken first, what
@@ -520,19 +534,18 @@ func (m Model) open(repo string, n int) tea.Cmd {
 
 func centre(r layout.Rect) layout.Point { return layout.Point{X: r.X + r.W/2, Y: r.Y + r.H/2} }
 
-// cycle steps through the tickets in reading order along the main axis.
+// cycle steps through the banner, then the tickets in reading order along
+// the main axis.
 func (m Model) cycle(forward bool) int {
-	ns := make([]int, 0, len(m.shown.Tickets))
-	for _, t := range m.shown.Tickets {
-		ns = append(ns, t.Number)
-	}
-	slices.SortStableFunc(ns, func(a, b int) int {
-		pa, pb := m.res().Boxes[a], m.res().Boxes[b]
+	ts := slices.Clone(m.shown.Tickets)
+	slices.SortStableFunc(ts, func(a, b *wayfinder.Ticket) int {
+		pa, pb := m.res().Boxes[a.Number], m.res().Boxes[b.Number]
 		if pa.X != pb.X {
 			return cmp.Compare(pa.X, pb.X)
 		}
 		return cmp.Compare(pa.Y, pb.Y)
 	})
+	ns := m.stops(ts)
 	i := slices.Index(ns, m.sel)
 	if forward {
 		return ns[(i+1)%len(ns)]
@@ -540,21 +553,21 @@ func (m Model) cycle(forward bool) int {
 	return ns[(i+len(ns)-1)%len(ns)]
 }
 
-// nearest finds the closest ticket in an arrow's direction, favouring ones
-// in line with the selection. It stays put if there is none.
+// nearest finds the closest ticket or banner in an arrow's direction,
+// favouring ones in line with the selection. It stays put if there is none.
 func (m Model) nearest(arrow string) int {
 	d := map[string]layout.Point{"left": {X: -1}, "right": {X: 1}, "up": {Y: -1}, "down": {Y: 1}}[arrow]
 	from := centre(m.res().Boxes[m.sel])
 	best, bestScore := m.sel, math.Inf(1)
-	for _, t := range m.shown.Tickets {
-		c := centre(m.res().Boxes[t.Number])
+	for _, n := range m.stops(m.shown.Tickets) {
+		c := centre(m.res().Boxes[n])
 		along := (c.X-from.X)*d.X + (c.Y-from.Y)*d.Y
-		if t.Number == m.sel || along <= 1 {
+		if n == m.sel || along <= 1 {
 			continue
 		}
 		perp := math.Abs((c.X-from.X)*d.Y - (c.Y-from.Y)*d.X)
 		if score := along + 2*perp; score < bestScore {
-			best, bestScore = t.Number, score
+			best, bestScore = n, score
 		}
 	}
 	return best
@@ -636,9 +649,10 @@ func (m Model) View() tea.View {
 	return m.newView(b.String())
 }
 
-// listRows fills the graph area with the tickets grouped by state, a
-// heading over each group, scrolled so the selection is in view. It also
-// returns the ticket on each row, or 0 for a heading or blank.
+// listRows fills the graph area with the map's row, then the tickets
+// grouped by state, a heading over each group, scrolled so the selection is
+// in view. It also returns the ticket or map on each row, or 0 for a
+// heading or blank.
 func (m Model) listRows() ([]string, []int) {
 	count := map[wayfinder.State]int{}
 	for _, t := range m.shown.Tickets {
@@ -647,20 +661,23 @@ func (m Model) listRows() ([]string, []int) {
 	var rows []string
 	var numbers []int
 	at := 0
+	add := func(n int, row string) {
+		if n == m.sel {
+			at = len(rows)
+			rows = append(rows, "\x1b[1m"+truncate("› "+row, m.cols)+"\x1b[0m")
+		} else {
+			rows = append(rows, truncate("  "+row, m.cols))
+		}
+		numbers = append(numbers, n)
+	}
+	add(m.shown.Number, fmt.Sprintf("map #%d · %s", m.shown.Number, m.shown.Title))
 	ts := listOrder(m.shown)
 	for i, t := range ts {
 		if i == 0 || t.State != ts[i-1].State {
 			heading := truncate(fmt.Sprintf("%s (%d)", t.State, count[t.State]), m.cols-3)
 			rows, numbers = append(rows, swatch(t.State)+" \x1b[1m"+heading+"\x1b[0m"), append(numbers, 0)
 		}
-		row := fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title)
-		if t.Number == m.sel {
-			at = len(rows)
-			rows = append(rows, "\x1b[1m"+truncate("› "+row, m.cols)+"\x1b[0m")
-		} else {
-			rows = append(rows, truncate("  "+row, m.cols))
-		}
-		numbers = append(numbers, t.Number)
+		add(t.Number, fmt.Sprintf("#%d %s · %s", t.Number, t.Type, t.Title))
 	}
 	fit := max(0, m.graphRows())
 	from := max(0, at-fit+1)
@@ -746,57 +763,34 @@ func (m Model) strip() []string {
 		return lines
 	}
 	lines[0] = m.hints()
-	if t := m.shown.Ticket(m.sel); t != nil {
-		title := m.titleRows(t)
-		lines[1], lines[2] = title[0], title[1]
+	var title [2]string
+	switch t := m.shown.Ticket(m.sel); {
+	case t != nil:
+		open := 0
+		for _, b := range t.Blockers {
+			if !b.Closed {
+				open++
+			}
+		}
+		title = m.titleRows(t.Number, t.Title, fmt.Sprintf("%s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number))))
+	case m.isMap(m.onMap(m.sel)):
+		state := "open"
+		if m.shown.Closed {
+			state = "closed"
+		}
+		title = m.titleRows(m.shown.Number, m.shown.Title, fmt.Sprintf("map · %s · %d/%d done", state, m.shown.Done(), len(m.shown.Tickets)))
 	}
+	lines[1], lines[2] = title[0], title[1]
 	return lines
 }
 
-// titleRows are the selected ticket's number and title, wrapped over two
-// rows, then its type, state, and counts of its open blockers and of the
-// tickets it blocks. A title too long for both rows is cut with … so that
-// the facts after it still show.
-func (m Model) titleRows(t *wayfinder.Ticket) [2]string {
-	open := 0
-	for _, b := range t.Blockers {
-		if !b.Closed {
-			open++
-		}
-	}
-	title := fmt.Sprintf("#%d %s", t.Number, t.Title)
-	facts := fmt.Sprintf(" · %s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number)))
-	lines := strings.Split(ansi.Wrap(title+facts, m.cols, ""), "\n")
-	if len(lines) > 2 {
-		first, _, _ := strings.Cut(ansi.Wrap(title, m.cols, ""), "\n")
-		rest := strings.TrimLeft(strings.TrimPrefix(title, first), " ")
-		second := ansi.Truncate(rest+facts, m.cols, "…")
-		if room := m.cols - ansi.StringWidth(facts); room > 1 {
-			second = ansi.Truncate(rest, room, "…") + facts
-		}
-		lines = []string{first, second}
-	}
-	lines = append(lines, "")
-	return [2]string{boldPrefix(lines[0], &title), boldPrefix(lines[1], &title)}
-}
-
-// boldPrefix bolds as much of line as is still the start of *title, and
-// moves *title past it, so the title shows bold across the rows it wraps
-// over and the facts after it don't.
-func boldPrefix(line string, title *string) string {
-	rest := strings.TrimLeft(*title, " ")
-	n := 0
-	for i, r := range line {
-		if !strings.HasPrefix(rest[i:], string(r)) {
-			break
-		}
-		n = i + len(string(r))
-	}
-	*title = rest[n:]
-	if n == 0 {
-		return line
-	}
-	return "\x1b[1m" + line[:n] + "\x1b[0m" + line[n:]
+// titleRows are the selection's number and title, bold, on one row, then
+// its facts on the next: a ticket's type, state, and counts of its open
+// blockers and of the tickets it blocks, or the map's state and progress.
+// Either row is cut with … if it is too long for the pane.
+func (m Model) titleRows(n int, name, facts string) [2]string {
+	title := ansi.Truncate(fmt.Sprintf("#%d %s", n, name), m.cols, "…")
+	return [2]string{"\x1b[1m" + title + "\x1b[0m", ansi.Truncate(facts, m.cols, "…")}
 }
 
 // hints shows what the colours and lines mean, then the keys, with the c

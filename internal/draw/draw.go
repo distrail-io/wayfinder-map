@@ -53,6 +53,16 @@ var (
 	ringCol  = color.RGBA{0xff, 0xd3, 0x3d, 0xff}
 )
 
+// The banner's size in layout units, by look, and the gap between it and
+// the tickets below.
+var bannerSize = map[Look]layout.Point{Cards: {X: 2 * cardW, Y: 84}, Compact: {X: 2 * circleD, Y: 40}}
+
+const bannerGap = 28
+
+// bannerFill is the banner's colour while the map is open: indigo, which no
+// ticket state uses.
+var bannerFill = color.RGBA{0x5b, 0x4b, 0xc4, 0xff}
+
 // FillOf is the card colour of each state, for a legend.
 func FillOf(s wayfinder.State) color.RGBA { return fillOf[s] }
 
@@ -71,6 +81,42 @@ func Graph(m *wayfinder.Map, look Look) layout.Graph {
 		g.Edges = append(g.Edges, layout.Edge{From: e.From, To: e.To})
 	}
 	return g
+}
+
+// Layout lays the map out in dir: Graph(m, look) in layers, with the banner
+// centred above the tickets, as the box of the map's number. The banner is
+// not a node and has no edges, so the layers are as Graph's alone, moved
+// down to make room. The extent covers both.
+func Layout(m *wayfinder.Map, look Look, dir layout.Dir) layout.Result {
+	res := layout.Layered(Graph(m, look), dir)
+	size := bannerSize[look]
+	mid := res.W / 2
+	if len(m.Tickets) > 0 {
+		left, right := math.Inf(1), math.Inf(-1)
+		for _, t := range m.Tickets {
+			b := res.Boxes[t.Number]
+			left, right = math.Min(left, b.X), math.Max(right, b.X+b.W)
+		}
+		mid = (left + right) / 2
+	}
+	// Move the tickets right if the banner would stick out to the left, and
+	// down below it.
+	dx, dy := math.Max(0, layout.Margin-(mid-size.X/2)), size.Y+bannerGap
+	res.Translate(dx, dy)
+	banner := layout.Rect{X: mid + dx - size.X/2, Y: layout.Margin, W: size.X, H: size.Y}
+	res.Boxes[m.Number] = banner
+	res.W = math.Max(res.W, banner.X+banner.W+layout.Margin)
+	if len(m.Tickets) == 0 {
+		res.H = banner.Y + banner.H + layout.Margin
+	}
+	return res
+}
+
+// Banner is the box of m's banner in res, if res has one: Layout's has, a
+// mini-map's laid out from Graph alone hasn't.
+func Banner(m *wayfinder.Map, res layout.Result) (layout.Rect, bool) {
+	b, ok := res.Boxes[m.Number]
+	return b, ok
 }
 
 // Transform takes layout units to pixels in the image Render draws: scaled
@@ -96,9 +142,11 @@ func (t Transform) Rect(r layout.Rect) layout.Rect {
 	return layout.Rect{X: p.X, Y: p.Y, W: r.W * t.S, H: r.H * t.S}
 }
 
-// Render draws the layout of Graph(m, look) centred in a W×H image, scaled
-// to fit but never above maxScale. Ticket sel, if any, gets a ring, and
-// ticket focus, if any, a double border.
+// Render draws a layout of the map, from Layout or of Graph(m, look), centred
+// in a W×H image, scaled to fit but never above maxScale. It draws the
+// banner if the layout has a box for it, as Layout's has and a mini-map's
+// hasn't. Ticket or banner sel, if any, gets a ring, and ticket focus, if
+// any, a double border.
 func Render(m *wayfinder.Map, res layout.Result, look Look, sel, focus int, W, H int, maxScale float64) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
 	tr := Fit(res, W, H, maxScale)
@@ -119,6 +167,9 @@ func Render(m *wayfinder.Map, res layout.Result, look Look, sel, focus int, W, H
 		line := flatten(pts)
 		stroke(img, line, math.Max(1, 1.8*s), col, dash)
 		arrowhead(img, line[len(line)-1], line[max(0, len(line)-3)], 9*s, col)
+	}
+	if b, ok := Banner(m, res); ok {
+		banner(img, m, tr.Rect(b), look, s, m.Number == sel)
 	}
 	for _, t := range m.Tickets {
 		b := tr.Rect(res.Boxes[t.Number])
@@ -168,11 +219,11 @@ func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected,
 	r := 8 * s
 	if focus {
 		for _, b := range focusBands {
-			boxBand(img, x, y, w, h, r, b[0]*s, b[1]*s, fillOf[t.State])
+			band(img, x, y, w, h, r, 0, b[0]*s, b[1]*s, fillOf[t.State])
 		}
 	}
 	if selected {
-		boxBand(img, x, y, w, h, r, 1*s, 4*s, ringCol)
+		band(img, x, y, w, h, r, 0, 1*s, 4*s, ringCol)
 	}
 	fill(img, roundRect(x, y, w, h, r), fillOf[t.State])
 	tc := textOn
@@ -190,20 +241,69 @@ func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected,
 	}
 }
 
+// banner draws the map's banner in box b: a rounded box in the cards look,
+// a pill in the compact look, indigo while the map is open and in the done
+// fill once it is closed.
+func banner(img *image.RGBA, m *wayfinder.Map, b layout.Rect, look Look, s float64, selected bool) {
+	r := 10 * s
+	if look == Compact {
+		r = b.H / 2
+	}
+	if selected {
+		band(img, b.X, b.Y, b.W, b.H, r, r+1*s, 1*s, 4*s, ringCol)
+	}
+	col, tc := bannerFill, textOn
+	if m.Closed {
+		col, tc = fillOf[wayfinder.Done], textDone
+	}
+	fill(img, roundRect(b.X, b.Y, b.W, b.H, r), col)
+	num := fmt.Sprintf("#%d", m.Number)
+	if look == Compact {
+		// The icon and number side by side, centred.
+		is, fs := 20*s, 13*s
+		w := is + 6*s + measure(num, fs, true)
+		x := b.X + (b.W-w)/2
+		mapGlyph.draw(img, x, b.Y+(b.H-is)/2, is, tc)
+		text(img, x+is+6*s, b.Y+b.H/2+fs*0.36, num, fs, true, tc)
+		return
+	}
+	is := 30 * s
+	mapGlyph.draw(img, b.X+14*s, b.Y+(b.H-is)/2, is, tc)
+	tx := b.X + 14*s + is + 14*s
+	tw := b.X + b.W - tx - 14*s
+	fs := 14 * s
+	lines := wrap(m.Title, fs, tw, 2)
+	// A title on one line leaves the text block centred.
+	top := b.Y + fs + 9*s + float64(2-len(lines))*fs*1.25/2
+	text(img, tx, top, num, fs*0.9, true, tc)
+	progress := fmt.Sprintf("%d/%d done", m.Done(), len(m.Tickets))
+	text(img, tx+tw-measure(progress, fs*0.9, true), top, progress, fs*0.9, true, tc)
+	for i, l := range lines {
+		text(img, tx, top+fs*1.45+float64(i)*fs*1.25, l, fs, false, tc)
+	}
+}
+
 // focusBands are the focus ticket's double border: two bands in its own
 // colour, as offsets from its edge in layout units. The selection's ring
 // lies over the first.
 var focusBands = [][2]float64{{1, 3}, {5, 7}}
 
-// boxBand draws a band around a card, from offset in to out beyond its edge,
-// punching out its middle by winding the inner path the other way.
-func boxBand(img *image.RGBA, x, y, w, h, r, in, out float64, col color.Color) {
-	o := out
-	p := roundRect(x-o, y-o, w+2*o, h+2*o, r+o)
-	p.moveTo(x-in, y-in)
-	p.lineTo(x-in, y+h+in)
-	p.lineTo(x+w+in, y+h+in)
-	p.lineTo(x+w+in, y-in)
+// band draws a band around a box with corners of radius r, from offset in
+// to out beyond its edge, punching out its middle by winding the inner path
+// the other way. The outside follows the box's corners; the inside has
+// corners of radius holeR: r+in to follow them too, as a pill's ring must,
+// or 0 for the square inside a card's bands have always had.
+func band(img *image.RGBA, x, y, w, h, r, holeR, in, out float64, col color.Color) {
+	p := roundRect(x-out, y-out, w+2*out, h+2*out, r+out)
+	x, y, w, h = x-in, y-in, w+2*in, h+2*in
+	p.moveTo(x+holeR, y)
+	p.quadTo(x, y, x, y+holeR)
+	p.lineTo(x, y+h-holeR)
+	p.quadTo(x, y+h, x+holeR, y+h)
+	p.lineTo(x+w-holeR, y+h)
+	p.quadTo(x+w, y+h, x+w, y+h-holeR)
+	p.lineTo(x+w, y+holeR)
+	p.quadTo(x+w, y, x+w-holeR, y)
 	p.close()
 	fill(img, p, col)
 }

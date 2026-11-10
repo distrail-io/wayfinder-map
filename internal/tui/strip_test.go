@@ -15,44 +15,62 @@ import (
 // text that wraps.
 func (a *app) text() string { return strings.ReplaceAll(ansi.Strip(a.view()), "\n", " ") }
 
-// strip is the rows between the graph area and the status line.
+// strip is the three rows from the hints row, between the graph area and
+// the map's warnings or the status line.
 func (a *app) strip() []string {
 	a.t.Helper()
 	lines := strings.Split(a.view(), "\n")
-	if len(lines) < 4 {
-		a.t.Fatalf("no strip:\n%s", a.view())
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], "c look") && i+3 <= len(lines) {
+			return lines[i : i+3]
+		}
 	}
-	return lines[len(lines)-4 : len(lines)-1]
+	a.t.Fatalf("no strip:\n%s", a.view())
+	return nil
 }
 
-// A long title wraps over the strip's two title rows and is cut only when
-// even two rows can't hold it; the strip stays three rows high, so the
-// graph area keeps its size whichever ticket is selected.
-func TestTheStripWrapsLongTitlesInAFixedHeight(t *testing.T) {
+// The selected banner's strip shows the map as a ticket's shows the ticket:
+// its number and title, bold, on one row, then its state and progress on
+// the next.
+func TestTheStripShowsTheSelectedBanner(t *testing.T) {
+	for _, c := range []struct{ fixture, facts string }{
+		{"map-214.json", "map · open · 0/8 done"},
+		{"map-edge-cases.json", "map · closed · 1/8 done"},
+	} {
+		src := &fakeSource{maps: map[int][]byte{214: fixture(t, c.fixture)}}
+		a := start(t, src, 214).sized()
+		a.tabToSelect(214)
+		s := a.strip()
+		if s[1] != "\x1b[1m#214 Wayfinder: run Sandcastle standalone against any Banked repo\x1b[0m" {
+			t.Errorf("%s: the first row isn't the map's bold number and title: %q", c.fixture, s[1])
+		}
+		if s[2] != c.facts {
+			t.Errorf("%s: the second row is %q, want %q", c.fixture, s[2], c.facts)
+		}
+	}
+}
+
+// The title takes the first row and the facts the second. A title too long
+// for its row is cut with …; the strip stays three rows high, so the graph
+// area keeps its size whichever ticket is selected.
+func TestTheStripPutsTheTitleAboveTheFactsInAFixedHeight(t *testing.T) {
 	long := strings.TrimSpace(strings.Repeat("word ", 30))
-	src := &fakeSource{maps: map[int][]byte{1: mapJSON(map[int]string{
-		1: "Short", 2: "A title too long for one row but fits two", 3: long}, nil)}}
-	a := start(t, src, 1)
+	src := &fakeSource{maps: map[int][]byte{100: mapJSON(map[int]string{1: "Short", 2: long}, map[int][]int{2: {1}})}}
+	a := start(t, src, 100)
 	a.send(tea.WindowSizeMsg{Width: 40, Height: 30})
 	if raw := a.wait(time.Second); placements(raw) != 1 || !strings.Contains(raw[0], ",c=40,r=26,") {
 		t.Fatalf("want the image over 30-3-1 = 26 rows, got %q", raw)
 	}
-	if s := a.strip(); ansi.Strip(s[1]) != "#1 Short · task · frontier · ⛔0 ↦0" || ansi.Strip(s[2]) != "" {
-		t.Errorf("a short title doesn't fit one row:\n%s", strings.Join(s, "\n"))
+	if s := a.strip(); s[1] != "\x1b[1m#1 Short\x1b[0m" || s[2] != "task · frontier · ⛔0 ↦1" {
+		t.Errorf("a short title and its facts aren't on rows of their own:\n%s", strings.Join(s, "\n"))
 	}
-	for a.selected() != 2 {
-		a.key("tab")
-	}
+	a.tabToSelect(2)
 	s := a.strip()
-	if got := ansi.Strip(s[1] + " " + s[2]); got != "#2 A title too long for one row but fits two · task · frontier · ⛔0 ↦0" {
-		t.Errorf("a two-row title isn't wrapped whole: %q", got)
+	if got := ansi.Strip(s[1]); !strings.HasPrefix(got, "#2 word word") || !strings.HasSuffix(got, "…") {
+		t.Errorf("a title too long for its row isn't cut with …: %q", got)
 	}
-	for a.selected() != 3 {
-		a.key("tab")
-	}
-	s = a.strip()
-	if !strings.HasPrefix(ansi.Strip(s[1]), "#3 word word") || !strings.HasSuffix(ansi.Strip(s[2]), "… · task · frontier · ⛔0 ↦0") {
-		t.Errorf("a title too long for two rows isn't cut with …:\n%s", strings.Join(s, "\n"))
+	if s[2] != "task · blocked · ⛔1 ↦0" {
+		t.Errorf("a long title's facts aren't on the second row: %q", s[2])
 	}
 	for _, line := range s {
 		if w := ansi.StringWidth(line); w > 40 {
@@ -66,8 +84,8 @@ func TestTheStripWrapsLongTitlesInAFixedHeight(t *testing.T) {
 
 // The hints name what c and d set, with their current values.
 func TestTheHintsShowTheLookAndDirection(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: line()}}
-	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	src := &fakeSource{maps: map[int][]byte{100: line()}}
+	a := startWith(t, src, tui.Config{Number: 100, AutoDir: true})
 	a.send(tea.WindowSizeMsg{Width: 200, Height: 30})
 	a.wait(time.Second)
 	if s := a.strip(); !strings.Contains(s[0], "c look: cards · d dir: auto (LR)") {
@@ -82,8 +100,8 @@ func TestTheHintsShowTheLookAndDirection(t *testing.T) {
 
 // In a narrow pane the legend gives way first, and the c and d hints last.
 func TestNarrowPanesKeepTheLookAndDirectionHints(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: line()}}
-	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	src := &fakeSource{maps: map[int][]byte{100: line()}}
+	a := startWith(t, src, tui.Config{Number: 100, AutoDir: true})
 	for _, c := range []struct {
 		width                 int
 		names, cd, otherHints bool

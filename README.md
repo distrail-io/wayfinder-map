@@ -8,22 +8,26 @@ wayfinder-map [MAP] [-R owner/repo] [--look cards|compact] [--dir auto|lr|tb] [-
 
 MAP is `123`, `#123`, `owner/repo#123` or an issue URL. Without a MAP, a picker lists the repo's open maps, most recently updated first. Each row shows how many of the map's tickets are done, and how many are ready, claimed and blocked. `enter` opens the map under the cursor. The picker lists 50 maps; if there are more, open one directly with `wayfinder-map <number>`.
 
-Each ticket is a card with its title, or in the compact look a circle with its number. Its fill is its state (grey done, blue claimed, green frontier, red blocked) and its icon is its type. Edges run from a blocker to what it blocks, and fade to dashes once the blocker is closed. Below the graph is a three-row strip: the colour legend and key hints, with the current look and direction (`c look: cards · d dir: auto (LR)`), then the selected ticket's whole title over up to two rows, its type, state, and counts of its open blockers and of the tickets it blocks (`⛔2 ↦1`). Then come the map's warnings: a closed map, more tickets or blockers than one query fetches, blockers in another repo (shown as `owner/repo#N`), tickets without a `wayfinder:*` type (shown as `?`) and cycles.
+Each ticket is a card with its title, or in the compact look a circle with its number. Its fill is its state (grey done, blue claimed, green frontier, red blocked) and its icon is its type. Edges run from a blocker to what it blocks, and fade to dashes once the blocker is closed.
+
+Above the tickets, centred, is the map's banner, which stands for the map issue itself. It has no edges. In the cards look it is a wide indigo box with a map icon, the map's number, its title over up to two lines and its progress (`4/8 done`); in the compact look it is an indigo pill with the icon and number. A closed map's banner is grey, like a done ticket. You select the banner as you select a ticket: it comes first in the `tab` cycle, the arrow keys reach it (`↑` from the top tickets), and a click opens it. Selected, it gets the same yellow ring, and the strip shows the map's number and title, then on the next row `map`, `open` or `closed`, and its progress (`map · open · 4/8 done`). `enter` or `space` opens the map issue in the detail view and `o` in the browser. A map with no tickets shows its banner alone, selected. The first frontier ticket is still selected when a map opens.
+
+Below the graph is a three-row strip: the colour legend and key hints, with the current look and direction (`c look: cards · d dir: auto (LR)`), then the selected ticket's (or banner's) number and title on one row, cut with `…` if it is too long, and its facts on the next: its type, state, and counts of its open blockers and of the tickets it blocks (`task · blocked · ⛔2 ↦1`). Then come the map's warnings: a closed map, more tickets or blockers than one query fetches, blockers in another repo (shown as `owner/repo#N`), tickets without a `wayfinder:*` type (shown as `?`) and cycles.
 
 | Key | |
 |---|---|
-| `←↑↓→` | select the nearest ticket that way |
-| `tab` / `shift+tab` | select the next or previous ticket |
-| `enter` / `space` | open the selected ticket in the detail view |
+| `←↑↓→` | select the nearest ticket or the banner that way |
+| `tab` / `shift+tab` | select the next or previous ticket; the banner comes first |
+| `enter` / `space` | open the selected ticket, or the map issue for the banner, in the detail view |
 | `m` | open the map issue in the detail view |
-| `o` | open the selected ticket in the browser |
+| `o` | open the selected ticket, or the map issue for the banner, in the browser |
 | `c` | switch between the card and compact looks |
 | `d` | switch the graph between left to right and top to bottom |
 | `b` / `esc` | go back to the picker |
 | `r` | refresh now |
 | `q` | quit |
 
-A click on a ticket opens it in the detail view too, and the wheel scrolls the picker.
+A click on a ticket or the banner opens it in the detail view too, and the wheel scrolls the picker.
 
 The map, or the picker, reloads every `--interval` (30s by default, 10s at least). The map is redrawn only when it changes.
 
@@ -41,7 +45,7 @@ The repo comes from the first of these that is set: the `owner/repo` in MAP, `-R
 
 The detail view fills the pane with one issue: its number, title, state (and whether it was closed as not planned or as a duplicate), type, assignees and labels, the map it belongs to, what it is blocked by and what it blocks, its sub-issues with their state and type and how many are done, and its body rendered from markdown. Blockers the map doesn't draw, from another repo or not on the map, are listed under "Also blocked by", so a blocked ticket never looks unblocked.
 
-Where the map is drawn, a ticket's blockers and the tickets it blocks are drawn as a mini-map: the map filtered to the ticket and its neighbours, with every edge between them, in the same look, at the map's full size or shrunk to fit the pane's width. The ticket has a double border and the cursor the map's yellow ring. The mini-map is printed as Kitty Unicode placeholders, so it scrolls with the text; it is deleted when you leave the view. In the compact look the neighbours' titles are listed under it, and a ticket with no blockers or blocked tickets says `no dependencies`. In list mode, in WezTerm (which answers the Kitty query but can't show placeholders), and with `--no-images`, they are listed as text instead, with the ticket itself between what blocks it and what it blocks. The map issue lists every ticket. Links are shown with their URL and can be opened from terminals that support OSC 8 hyperlinks.
+Where the map is drawn, a ticket's blockers and the tickets it blocks are drawn as a mini-map: the map filtered to the ticket and its neighbours, with every edge between them, in the same look, at the map's full size or shrunk to fit the pane's width. The ticket has a double border and the cursor the map's yellow ring. The mini-map has no banner. The mini-map is printed as Kitty Unicode placeholders, so it scrolls with the text; it is deleted when you leave the view. In the compact look the neighbours' titles are listed under it, and a ticket with no blockers or blocked tickets says `no dependencies`. In list mode, in WezTerm (which answers the Kitty query but can't show placeholders), and with `--no-images`, they are listed as text instead, with the ticket itself between what blocks it and what it blocks. The map issue lists every ticket. Links are shown with their URL and can be opened from terminals that support OSC 8 hyperlinks.
 
 Where the mini-map is drawn, the body's images are shown inline too, in their place in the text, including images in private repos. They are scaled to the pane's width and to at most 60% of its height, keeping their shape, and scroll with the text. While an image loads, `loading image…` holds the space its `<img width height>` asks for. Each image is fetched once, so refreshing doesn't fetch it again, unless fetching it failed. Elsewhere, and for SVGs, videos, images from other hosts and images that fail to load, each shows as a `🖼 alt text` placeholder, and `o` opens the issue to see it.
 
@@ -62,11 +66,11 @@ It shows what the map already knows at once, and the rest once the issue has loa
 | `r` | refresh now |
 | `q` | quit |
 
-A click on a related issue or a mini-map ticket opens it, and the wheel scrolls. Going back to the map selects the last ticket you viewed.
+A click on a related issue or a mini-map ticket opens it, and the wheel scrolls. Going back to the map selects the last ticket you viewed, or the banner if you were on the map issue.
 
 ## Terminals without Kitty graphics
 
-Before it starts, wayfinder-map asks the terminal whether it shows Kitty graphics. If the terminal doesn't answer yes within a second, as in Terminal.app, or in tmux without passthrough, it shows the list instead of the graph. The list has the tickets grouped as frontier, claimed, blocked, then done, with the same strip below. `↑↓`, `j`/`k` or `tab`/`shift+tab` move the selection, `enter`, `space` or a click opens the detail view, which works the same as with graphics, and `c` and `d` do nothing on the list.
+Before it starts, wayfinder-map asks the terminal whether it shows Kitty graphics. If the terminal doesn't answer yes within a second, as in Terminal.app, or in tmux without passthrough, it shows the list instead of the graph. The list's first row is the map (`map #214 · title`), then the tickets grouped as frontier, claimed, blocked, then done, with the same strip below. `↑↓`, `j`/`k` or `tab`/`shift+tab` move the selection, `enter`, `space` or a click opens the detail view, which works the same as with graphics, and `c` and `d` do nothing on the list. On the map's row, `enter`, `space` and `o` act on the map, as they do on the banner.
 
 `--list` always shows the list. `--list=false` always draws the graph, without asking. Use that if the terminal shows Kitty graphics but doesn't answer the query. Herdr inside iTerm2 shows no images ([herdr #3941](https://github.com/herdrdev/herdr/issues/3941)) but may still answer yes, so use `--list` there.
 
