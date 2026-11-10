@@ -10,6 +10,7 @@ package draw
 //	grilling   message-square
 //	task       square-check
 //	?          circle-question-mark
+//	the map    map                   (derived from Feather), on the banner
 //
 // ISC License
 //
@@ -27,7 +28,7 @@ package draw
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
-// The MIT License (MIT) (for icons derived from Feather, here: search)
+// The MIT License (MIT) (for icons derived from Feather, here: search and map)
 //
 // Copyright (c) 2013-present Cole Bemis
 //
@@ -110,6 +111,9 @@ func (p *pen) done() { p.g.lines = append(p.g.lines, p.pts) }
 
 var glyphs = map[wayfinder.Type]*glyph{}
 
+// mapIcon is the banner's icon. It is no ticket type, so no label names it.
+const mapIcon wayfinder.Type = "map"
+
 func init() {
 	g := &glyph{} // search: <path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>
 	g.at(21, 21).to(16.66, 16.66).done()
@@ -148,6 +152,14 @@ func init() {
 	g.at(9.09, 9).cubic(10.21, 5.8, 14.93, 6.61, 14.92, 10).cubic(14.92, 12, 11.92, 13, 11.92, 13).done()
 	g.dots = []layout.Point{{X: 12, Y: 17}}
 	glyphs[wayfinder.NoType] = g
+
+	// map: <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+	// <line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/>
+	g = &glyph{}
+	g.at(3, 6).to(9, 3).to(15, 6).to(21, 3).to(21, 18).to(15, 21).to(9, 18).to(3, 21).to(3, 6).done()
+	g.at(9, 3).to(9, 18).done()
+	g.at(15, 6).to(15, 21).done()
+	glyphs[mapIcon] = g
 }
 
 // icon draws a ticket type's icon in a size×size square at (x, y).

@@ -90,6 +90,100 @@ func TestSelectedTicketHasAYellowRing(t *testing.T) {
 	}
 }
 
+var indigo = color.RGBA{0x5b, 0x4b, 0xc4, 0xff}
+
+// bannerFillAt is a point inside the banner b, clear of its icon and text:
+// near a card's bottom-right corner, or below the middle of a pill.
+func bannerFillAt(b layout.Rect, look draw.Look) image.Point {
+	if look == draw.Compact {
+		return image.Pt(int(b.X+b.W/2), int(b.Y+b.H)-3)
+	}
+	return image.Pt(int(b.X+b.W)-12, int(b.Y+b.H)-4)
+}
+
+// The banner stands for the map: a box centred above its tickets, in a
+// colour no ticket state uses, with no edges.
+func TestTheBannerIsIndigoAndCentredAboveTheTickets(t *testing.T) {
+	m := load(t, "214")
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		for _, dir := range []layout.Dir{layout.LR, layout.TB} {
+			res := draw.Layout(m, look, dir)
+			img := draw.Render(m, res, look, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+			b, ok := res.Boxes[m.Number]
+			if !ok {
+				t.Fatalf("%v %v: no banner", look, dir)
+			}
+			left, right := math.Inf(1), math.Inf(-1)
+			for _, tk := range m.Tickets {
+				tb := res.Boxes[tk.Number]
+				if tb.Y < b.Y+b.H {
+					t.Errorf("%v %v: #%d at y %v is not below the banner, which ends at %v", look, dir, tk.Number, tb.Y, b.Y+b.H)
+				}
+				left, right = math.Min(left, tb.X), math.Max(right, tb.X+tb.W)
+			}
+			if mid := b.X + b.W/2; math.Abs(mid-(left+right)/2) > 1 {
+				t.Errorf("%v %v: the banner's middle is at x %v, the tickets' at %v", look, dir, mid, (left+right)/2)
+			}
+			if len(res.Curves) != len(m.Edges) {
+				t.Errorf("%v %v: %d curves for %d edges", look, dir, len(res.Curves), len(m.Edges))
+			}
+			if p := bannerFillAt(b, look); img.RGBAAt(p.X, p.Y) != indigo {
+				t.Errorf("%v %v: the banner is %v at %v, want indigo %v", look, dir, img.RGBAAt(p.X, p.Y), p, indigo)
+			}
+		}
+	}
+}
+
+func TestAClosedMapsBannerIsInTheDoneFill(t *testing.T) {
+	m := load(t, "edge-cases")
+	if !m.Closed {
+		t.Fatal("the edge-cases map should be closed")
+	}
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := draw.Layout(m, look, layout.LR)
+		img := draw.Render(m, res, look, 0, 0, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+		p := bannerFillAt(res.Boxes[m.Number], look)
+		if got, want := img.RGBAAt(p.X, p.Y), draw.FillOf(wayfinder.Done); got != want {
+			t.Errorf("%v: the closed map's banner is %v, want the done fill %v", look, got, want)
+		}
+	}
+}
+
+func TestTheSelectedBannerHasAYellowRing(t *testing.T) {
+	m := load(t, "214")
+	yellow := color.RGBA{0xff, 0xd3, 0x3d, 0xff}
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := draw.Layout(m, look, layout.TB)
+		W, H := int(math.Ceil(res.W)), int(math.Ceil(res.H))
+		b := res.Boxes[m.Number]
+		// Two units left of the banner, halfway down: in the ring's band.
+		x, y := int(b.X)-2, int(b.Y+b.H/2)
+		if got := draw.Render(m, res, look, m.Number, 0, W, H, 1).RGBAAt(x, y); got != yellow {
+			t.Errorf("%v: beside the selected banner is %v, want yellow", look, got)
+		}
+		if got := draw.Render(m, res, look, 218, 0, W, H, 1).RGBAAt(x, y); got == yellow {
+			t.Errorf("%v: the banner has a ring while #218 is selected", look)
+		}
+	}
+}
+
+// The mini-map shows a ticket and its neighbours only: its layout has no
+// banner, so none is drawn.
+func TestTheMiniMapHasNoBanner(t *testing.T) {
+	m := load(t, "214").MiniMap(220)
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		res := layout.Layered(draw.Graph(m, look), layout.LR)
+		img := draw.Render(m, res, look, m.Number, 220, int(math.Ceil(res.W)), int(math.Ceil(res.H)), 1)
+		for y := range img.Bounds().Dy() {
+			for x := range img.Bounds().Dx() {
+				if near(img.RGBAAt(x, y), indigo) {
+					t.Fatalf("%v: the mini-map has the banner's indigo at (%d, %d)", look, x, y)
+				}
+			}
+		}
+	}
+}
+
 // The focus ticket has a double border in its own colour, a style the map
 // never uses, so it isn't mistaken for the selection's yellow ring.
 func TestTheFocusTicketHasADoubleBorder(t *testing.T) {
@@ -136,7 +230,7 @@ func TestGoldens(t *testing.T) {
 
 func goldenMap(t *testing.T, name string, look draw.Look, dir layout.Dir) {
 	m := load(t, name)
-	res := layout.Layered(draw.Graph(m, look), dir)
+	res := draw.Layout(m, look, dir)
 	sel := 0
 	for _, tk := range m.Tickets {
 		if tk.State == wayfinder.Frontier {
