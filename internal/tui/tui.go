@@ -466,10 +466,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 // listKey moves the selection through the list, the map's row first,
 // stopping at its ends.
 func (m Model) listKey(k string) (tea.Model, tea.Cmd) {
-	ns := []int{m.shown.Number}
-	for _, t := range listOrder(m.shown) {
-		ns = append(ns, t.Number)
-	}
+	ns := m.stops(listOrder(m.shown))
 	i := slices.Index(ns, m.sel)
 	switch k {
 	case "up", "k", "shift+tab":
@@ -479,6 +476,17 @@ func (m Model) listKey(k string) (tea.Model, tea.Cmd) {
 	}
 	m.sel = ns[i]
 	return m, nil
+}
+
+// stops are what the selection can be on, in order: the banner, or the
+// map's row in the list, then tickets ts.
+func (m Model) stops(ts []*wayfinder.Ticket) []int {
+	ns := make([]int, 0, 1+len(ts))
+	ns = append(ns, m.shown.Number)
+	for _, t := range ts {
+		ns = append(ns, t.Number)
+	}
+	return ns
 }
 
 // listStates are the list's groups, in order: what can be taken first, what
@@ -531,18 +539,15 @@ func centre(r layout.Rect) layout.Point { return layout.Point{X: r.X + r.W/2, Y:
 // cycle steps through the banner, then the tickets in reading order along
 // the main axis.
 func (m Model) cycle(forward bool) int {
-	ns := make([]int, 0, len(m.shown.Tickets))
-	for _, t := range m.shown.Tickets {
-		ns = append(ns, t.Number)
-	}
-	slices.SortStableFunc(ns, func(a, b int) int {
-		pa, pb := m.res().Boxes[a], m.res().Boxes[b]
+	ts := slices.Clone(m.shown.Tickets)
+	slices.SortStableFunc(ts, func(a, b *wayfinder.Ticket) int {
+		pa, pb := m.res().Boxes[a.Number], m.res().Boxes[b.Number]
 		if pa.X != pb.X {
 			return cmp.Compare(pa.X, pb.X)
 		}
 		return cmp.Compare(pa.Y, pb.Y)
 	})
-	ns = append([]int{m.shown.Number}, ns...)
+	ns := m.stops(ts)
 	i := slices.Index(ns, m.sel)
 	if forward {
 		return ns[(i+1)%len(ns)]
@@ -556,11 +561,7 @@ func (m Model) nearest(arrow string) int {
 	d := map[string]layout.Point{"left": {X: -1}, "right": {X: 1}, "up": {Y: -1}, "down": {Y: 1}}[arrow]
 	from := centre(m.res().Boxes[m.sel])
 	best, bestScore := m.sel, math.Inf(1)
-	ns := []int{m.shown.Number}
-	for _, t := range m.shown.Tickets {
-		ns = append(ns, t.Number)
-	}
-	for _, n := range ns {
+	for _, n := range m.stops(m.shown.Tickets) {
 		c := centre(m.res().Boxes[n])
 		along := (c.X-from.X)*d.X + (c.Y-from.Y)*d.Y
 		if n == m.sel || along <= 1 {
