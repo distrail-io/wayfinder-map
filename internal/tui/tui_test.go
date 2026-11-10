@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/distrail-io/wayfinder-map/internal/draw"
 	"github.com/distrail-io/wayfinder-map/internal/layout"
@@ -478,7 +479,7 @@ func TestDetailsShowTheSelectedTicket(t *testing.T) {
 	// The first frontier ticket starts selected; it blocks two others.
 	for _, want := range []string{
 		"#215 Where does standalone Sandcastle live",
-		"· grilling · frontier · ⛔0 ↦2",
+		"grilling · frontier · ⛔0 ↦2",
 	} {
 		if !strings.Contains(a.text(), want) {
 			t.Errorf("details lack %q:\n%s", want, a.view())
@@ -503,7 +504,7 @@ func TestArrowsMoveToTheNearestTicket(t *testing.T) {
 	if raw := a.wait(time.Second); placements(raw) != 1 {
 		t.Errorf("moving the selection placed %d images, want 1", placements(raw))
 	}
-	if !strings.Contains(a.text(), "#2 Two · task · blocked · ⛔1 ↦0") {
+	if s := a.strip(); ansi.Strip(s[1]) != "#2 Two" || s[2] != "task · blocked · ⛔1 ↦0" {
 		t.Errorf("right from #1 didn't select #2:\n%s", a.view())
 	}
 	a.key("left")
@@ -536,7 +537,7 @@ func TestAnEmptyMapShowsTheBannerSelected(t *testing.T) {
 	if raw := a.wait(time.Second); placements(raw) != 1 {
 		t.Errorf("an empty map placed %d images, want 1 with its banner", placements(raw))
 	}
-	if !strings.Contains(a.text(), "#100 Map · map · open · 0/0 done") {
+	if s := a.strip(); ansi.Strip(s[1]) != "#100 Map" || s[2] != "map · open · 0/0 done" {
 		t.Errorf("the banner isn't selected:\n%s", a.view())
 	}
 	a.key("tab")
@@ -638,7 +639,7 @@ func TestRedrawsOnlyOnChange(t *testing.T) {
 		t.Errorf("a changed map placed %d images, want 1", placements(raw))
 	}
 	// #215 is still selected, and is now claimed.
-	if !strings.Contains(a.text(), "· grilling · claimed ·") {
+	if !strings.Contains(a.text(), "grilling · claimed ·") {
 		t.Errorf("details don't follow the change:\n%s", a.view())
 	}
 }

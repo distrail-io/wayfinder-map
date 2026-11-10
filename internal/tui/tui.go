@@ -127,9 +127,10 @@ type (
 const drawDelay = 60 * time.Millisecond
 
 // The strip below the graph: the legend and key hints, then the selected
-// ticket's title over two rows. Then a row for each of the map's warnings,
-// up to maxWarningRows, and the status line last. The strip's height is
-// fixed, so a long title never moves the graph.
+// ticket's or banner's title on one row and its facts on the next. Then a
+// row for each of the map's warnings, up to maxWarningRows, and the status
+// line last. The strip's height is fixed, so a long title never moves the
+// graph.
 const (
 	stripRows      = 3
 	maxWarningRows = 6
@@ -771,56 +772,25 @@ func (m Model) strip() []string {
 				open++
 			}
 		}
-		title = m.titleRows(t.Number, t.Title, fmt.Sprintf(" · %s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number))))
+		title = m.titleRows(t.Number, t.Title, fmt.Sprintf("%s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number))))
 	case m.isMap(m.onMap(m.sel)):
 		state := "open"
 		if m.shown.Closed {
 			state = "closed"
 		}
-		title = m.titleRows(m.shown.Number, m.shown.Title, fmt.Sprintf(" · map · %s · %d/%d done", state, m.shown.Done(), len(m.shown.Tickets)))
+		title = m.titleRows(m.shown.Number, m.shown.Title, fmt.Sprintf("map · %s · %d/%d done", state, m.shown.Done(), len(m.shown.Tickets)))
 	}
 	lines[1], lines[2] = title[0], title[1]
 	return lines
 }
 
-// titleRows are the selection's number and title, wrapped over two rows,
-// then its facts: a ticket's type, state, and counts of its open blockers
-// and of the tickets it blocks, or the map's state and progress. A title
-// too long for both rows is cut with … so that the facts after it still
-// show.
+// titleRows are the selection's number and title, bold, on one row, then
+// its facts on the next: a ticket's type, state, and counts of its open
+// blockers and of the tickets it blocks, or the map's state and progress.
+// Either row is cut with … if it is too long for the pane.
 func (m Model) titleRows(n int, name, facts string) [2]string {
-	title := fmt.Sprintf("#%d %s", n, name)
-	lines := strings.Split(ansi.Wrap(title+facts, m.cols, ""), "\n")
-	if len(lines) > 2 {
-		first, _, _ := strings.Cut(ansi.Wrap(title, m.cols, ""), "\n")
-		rest := strings.TrimLeft(strings.TrimPrefix(title, first), " ")
-		second := ansi.Truncate(rest+facts, m.cols, "…")
-		if room := m.cols - ansi.StringWidth(facts); room > 1 {
-			second = ansi.Truncate(rest, room, "…") + facts
-		}
-		lines = []string{first, second}
-	}
-	lines = append(lines, "")
-	return [2]string{boldPrefix(lines[0], &title), boldPrefix(lines[1], &title)}
-}
-
-// boldPrefix bolds as much of line as is still the start of *title, and
-// moves *title past it, so the title shows bold across the rows it wraps
-// over and the facts after it don't.
-func boldPrefix(line string, title *string) string {
-	rest := strings.TrimLeft(*title, " ")
-	n := 0
-	for i, r := range line {
-		if !strings.HasPrefix(rest[i:], string(r)) {
-			break
-		}
-		n = i + len(string(r))
-	}
-	*title = rest[n:]
-	if n == 0 {
-		return line
-	}
-	return "\x1b[1m" + line[:n] + "\x1b[0m" + line[n:]
+	title := ansi.Truncate(fmt.Sprintf("#%d %s", n, name), m.cols, "…")
+	return [2]string{"\x1b[1m" + title + "\x1b[0m", ansi.Truncate(facts, m.cols, "…")}
 }
 
 // hints shows what the colours and lines mean, then the keys, with the c
