@@ -307,7 +307,7 @@ func (m Model) loaded(msg loadedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.shown = msg.m
 	m = m.relayout()
-	if m.shown.Ticket(m.sel) == nil && !m.bannerSelected() {
+	if !slices.Contains(m.stops(m.shown.Tickets), m.sel) {
 		m.sel = firstSelection(m.shown)
 	}
 	m, redraw := m.redraw()
@@ -323,10 +323,6 @@ func (m Model) relayout() Model {
 	m.layouts = [2]layout.Result{layout.LR: draw.Layout(m.shown, m.look, layout.LR), layout.TB: draw.Layout(m.shown, m.look, layout.TB)}
 	return m.fit()
 }
-
-// bannerSelected is whether the selection is the map's banner, or its row
-// in the list. A map's number is never one of its tickets'.
-func (m Model) bannerSelected() bool { return m.shown != nil && m.sel == m.shown.Number }
 
 // fit picks the direction that draws larger in the graph area, while it is
 // automatic.
@@ -479,7 +475,8 @@ func (m Model) listKey(k string) (tea.Model, tea.Cmd) {
 }
 
 // stops are what the selection can be on, in order: the banner, or the
-// map's row in the list, then tickets ts.
+// map's row in the list, then tickets ts. A map's number is never one of
+// its tickets'.
 func (m Model) stops(ts []*wayfinder.Ticket) []int {
 	ns := make([]int, 0, 1+len(ts))
 	ns = append(ns, m.shown.Number)
@@ -775,7 +772,7 @@ func (m Model) strip() []string {
 			}
 		}
 		title = m.titleRows(t.Number, t.Title, fmt.Sprintf(" · %s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number))))
-	case m.bannerSelected():
+	case m.isMap(m.onMap(m.sel)):
 		state := "open"
 		if m.shown.Closed {
 			state = "closed"

@@ -58,7 +58,7 @@ func (m Model) ticketAt(x, y int) int {
 // the map's layout has a banner, not a mini-map's.
 func (m Model) hit(mp *wayfinder.Map, res layout.Result, tr draw.Transform, x, y int) int {
 	p := layout.Point{X: (float64(x) + 0.5) * float64(m.cellW), Y: (float64(y) + 0.5) * float64(m.cellH)}
-	if b, ok := res.Boxes[mp.Number]; ok && m.within(tr.Rect(b), p) {
+	if b, ok := draw.Banner(mp, res); ok && m.within(tr.Rect(b), p) {
 		return mp.Number
 	}
 	for _, t := range mp.Tickets {

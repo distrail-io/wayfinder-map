@@ -112,6 +112,13 @@ func Layout(m *wayfinder.Map, look Look, dir layout.Dir) layout.Result {
 	return res
 }
 
+// Banner is the box of m's banner in res, if res has one: Layout's has, a
+// mini-map's laid out from Graph alone hasn't.
+func Banner(m *wayfinder.Map, res layout.Result) (layout.Rect, bool) {
+	b, ok := res.Boxes[m.Number]
+	return b, ok
+}
+
 // Transform takes layout units to pixels in the image Render draws: scaled
 // by S, then offset by OX, OY to centre the drawing. Click hit-testing uses
 // it too, so it finds tickets where they are drawn.
@@ -161,7 +168,7 @@ func Render(m *wayfinder.Map, res layout.Result, look Look, sel, focus int, W, H
 		stroke(img, line, math.Max(1, 1.8*s), col, dash)
 		arrowhead(img, line[len(line)-1], line[max(0, len(line)-3)], 9*s, col)
 	}
-	if b, ok := res.Boxes[m.Number]; ok {
+	if b, ok := Banner(m, res); ok {
 		banner(img, m, tr.Rect(b), look, s, m.Number == sel)
 	}
 	for _, t := range m.Tickets {
