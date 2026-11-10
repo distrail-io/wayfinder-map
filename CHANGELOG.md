@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/distrail-io/wayfinder-map/compare/v0.5.0...v0.6.0) (2026-11-10)
+
+
+### Features
+
+* banner: show the map itself above its tickets, selectable like a ticket ([#32](https://github.com/distrail-io/wayfinder-map/issues/32)) ([ffeab1d](https://github.com/distrail-io/wayfinder-map/commit/ffeab1daa97f854fcd573ba84181b9c6a9665036))
+
 ## [0.5.0](https://github.com/distrail-io/wayfinder-map/compare/v0.4.0...v0.5.0) (2026-11-09)
 
 
