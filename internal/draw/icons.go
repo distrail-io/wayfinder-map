@@ -111,8 +111,9 @@ func (p *pen) done() { p.g.lines = append(p.g.lines, p.pts) }
 
 var glyphs = map[wayfinder.Type]*glyph{}
 
-// mapIcon is the banner's icon. It is no ticket type, so no label names it.
-const mapIcon wayfinder.Type = "map"
+// mapGlyph is the banner's icon. The map is no ticket, so its icon is no
+// ticket type's.
+var mapGlyph = &glyph{}
 
 func init() {
 	g := &glyph{} // search: <path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>
@@ -155,11 +156,10 @@ func init() {
 
 	// map: <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
 	// <line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/>
-	g = &glyph{}
+	g = mapGlyph
 	g.at(3, 6).to(9, 3).to(15, 6).to(21, 3).to(21, 18).to(15, 21).to(9, 18).to(3, 21).to(3, 6).done()
 	g.at(9, 3).to(9, 18).done()
 	g.at(15, 6).to(15, 21).done()
-	glyphs[mapIcon] = g
 }
 
 // icon draws a ticket type's icon in a size×size square at (x, y).
@@ -168,6 +168,11 @@ func icon(img *image.RGBA, typ wayfinder.Type, x, y, size float64, col color.Col
 	if !ok {
 		g = glyphs[wayfinder.NoType]
 	}
+	g.draw(img, x, y, size, col)
+}
+
+// draw draws the glyph in a size×size square at (x, y).
+func (g *glyph) draw(img *image.RGBA, x, y, size float64, col color.Color) {
 	s := size / 24
 	w := math.Max(1.2, 2*s)
 	at := func(p layout.Point) layout.Point { return layout.Point{X: x + p.X*s, Y: y + p.Y*s} }

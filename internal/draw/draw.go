@@ -263,12 +263,12 @@ func banner(img *image.RGBA, m *wayfinder.Map, b layout.Rect, look Look, s float
 		is, fs := 20*s, 13*s
 		w := is + 6*s + measure(num, fs, true)
 		x := b.X + (b.W-w)/2
-		icon(img, mapIcon, x, b.Y+(b.H-is)/2, is, tc)
+		mapGlyph.draw(img, x, b.Y+(b.H-is)/2, is, tc)
 		text(img, x+is+6*s, b.Y+b.H/2+fs*0.36, num, fs, true, tc)
 		return
 	}
 	is := 30 * s
-	icon(img, mapIcon, b.X+14*s, b.Y+(b.H-is)/2, is, tc)
+	mapGlyph.draw(img, b.X+14*s, b.Y+(b.H-is)/2, is, tc)
 	tx := b.X + 14*s + is + 14*s
 	tw := b.X + b.W - tx - 14*s
 	fs := 14 * s
