@@ -46,11 +46,15 @@ The list of a repo's open maps that you choose from when no map is named.
 How tickets are drawn in the graph: as **cards** (box with title) or **compact** (circle with type icon and number).
 _Avoid_: Theme, style, mode
 
+**Banner**:
+The map's own box, drawn above its tickets, that stands for the map issue and can be selected like a ticket.
+_Avoid_: Title bar, map card, map node
+
 **Strip**:
 The rows under the map: the legend and key hints, then the selected ticket's title and facts.
 
 **Selection**:
-The highlighted ticket on the map, or the cursor on a related issue in the detail view.
+The highlighted ticket or banner on the map, or the cursor on a related issue in the detail view.
 _Avoid_: Focus
 
 **Detail view**:
