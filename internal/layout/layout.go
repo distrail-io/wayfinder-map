@@ -71,6 +71,22 @@ func (r Result) Scale(w, h, maxScale float64) float64 {
 	return math.Min(math.Min(w/r.W, h/r.H), maxScale)
 }
 
+// Translate moves every box and curve point of r by (dx, dy), and grows its
+// extent by as much, so the far margins stay as they were. It changes r's
+// boxes and curves in place.
+func (r *Result) Translate(dx, dy float64) {
+	for n, b := range r.Boxes {
+		r.Boxes[n] = Rect{X: b.X + dx, Y: b.Y + dy, W: b.W, H: b.H}
+	}
+	for _, c := range r.Curves {
+		for i, p := range c.Pts {
+			c.Pts[i] = Point{X: p.X + dx, Y: p.Y + dy}
+		}
+	}
+	r.W += dx
+	r.H += dy
+}
+
 // BestFit returns the direction whose layout draws larger in a w×h area,
 // given the two layouts of one graph. LR wins a tie.
 func BestFit(lr, tb Result, w, h, maxScale float64) Dir {
@@ -80,8 +96,10 @@ func BestFit(lr, tb Result, w, h, maxScale float64) Dir {
 	return LR
 }
 
+// Margin is the space a layout leaves around its drawing.
+const Margin = 16
+
 const (
-	margin    = 16
 	dummySize = 8
 	// orderRounds caps the median sweeps; each keeps the best order seen.
 	orderRounds = 24
@@ -573,11 +591,11 @@ func (l *layered) place() {
 		lo = math.Min(lo, v.pos-v.cross/2)
 	}
 	for _, v := range l.nodes {
-		v.pos += margin - lo
+		v.pos += Margin - lo
 	}
 	// Main axis: one band per layer, as thick as its largest node.
 	l.bandStart, l.bandEnd = make([]float64, len(l.layers)), make([]float64, len(l.layers))
-	x := float64(margin)
+	x := float64(Margin)
 	for ly, layer := range l.layers {
 		thick := 0.0
 		for _, v := range layer {
@@ -631,8 +649,8 @@ func (l *layered) result(g Graph, index map[int]int) Result {
 
 	// The extent covers every node and every curve: a Bézier stays within
 	// its control points.
-	res.W, res.H = 2*margin, 2*margin
-	grow := func(x, y float64) { res.W, res.H = max(res.W, x+margin), max(res.H, y+margin) }
+	res.W, res.H = 2*Margin, 2*Margin
+	grow := func(x, y float64) { res.W, res.H = max(res.W, x+Margin), max(res.H, y+Margin) }
 	for _, b := range res.Boxes {
 		grow(b.X+b.W, b.Y+b.H)
 	}

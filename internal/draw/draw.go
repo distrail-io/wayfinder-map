@@ -57,10 +57,7 @@ var (
 // the tickets below.
 var bannerSize = map[Look]layout.Point{Cards: {X: 2 * cardW, Y: 84}, Compact: {X: 2 * circleD, Y: 40}}
 
-const (
-	bannerGap = 28
-	margin    = 16 // the layout's margin around the drawing
-)
+const bannerGap = 28
 
 // bannerFill is the banner's colour while the map is open: indigo, which no
 // ticket state uses.
@@ -104,21 +101,13 @@ func Layout(m *wayfinder.Map, look Look, dir layout.Dir) layout.Result {
 	}
 	// Move the tickets right if the banner would stick out to the left, and
 	// down below it.
-	dx, dy := math.Max(0, margin-(mid-size.X/2)), size.Y+bannerGap
-	for n, b := range res.Boxes {
-		res.Boxes[n] = layout.Rect{X: b.X + dx, Y: b.Y + dy, W: b.W, H: b.H}
-	}
-	for _, c := range res.Curves {
-		for i, p := range c.Pts {
-			c.Pts[i] = layout.Point{X: p.X + dx, Y: p.Y + dy}
-		}
-	}
-	banner := layout.Rect{X: mid + dx - size.X/2, Y: margin, W: size.X, H: size.Y}
+	dx, dy := math.Max(0, layout.Margin-(mid-size.X/2)), size.Y+bannerGap
+	res.Translate(dx, dy)
+	banner := layout.Rect{X: mid + dx - size.X/2, Y: layout.Margin, W: size.X, H: size.Y}
 	res.Boxes[m.Number] = banner
-	res.W = math.Max(res.W+dx, banner.X+banner.W+margin)
-	res.H += dy
+	res.W = math.Max(res.W, banner.X+banner.W+layout.Margin)
 	if len(m.Tickets) == 0 {
-		res.H = banner.Y + banner.H + margin
+		res.H = banner.Y + banner.H + layout.Margin
 	}
 	return res
 }
