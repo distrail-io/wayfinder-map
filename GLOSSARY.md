@@ -51,7 +51,7 @@ The map's own box, drawn above its tickets, that stands for the map issue and ca
 _Avoid_: Title bar, map card, map node
 
 **Strip**:
-The rows under the map: the legend and key hints, then the selected ticket's title and facts.
+The rows under the map: the legend and key hints, then the selected ticket's or banner's title and facts.
 
 **Selection**:
 The highlighted ticket or banner on the map, or the cursor on a related issue in the detail view.
