@@ -30,9 +30,9 @@ func (a *app) strip() []string {
 // graph area keeps its size whichever ticket is selected.
 func TestTheStripWrapsLongTitlesInAFixedHeight(t *testing.T) {
 	long := strings.TrimSpace(strings.Repeat("word ", 30))
-	src := &fakeSource{maps: map[int][]byte{1: mapJSON(map[int]string{
+	src := &fakeSource{maps: map[int][]byte{100: mapJSON(map[int]string{
 		1: "Short", 2: "A title too long for one row but fits two", 3: long}, nil)}}
-	a := start(t, src, 1)
+	a := start(t, src, 100)
 	a.send(tea.WindowSizeMsg{Width: 40, Height: 30})
 	if raw := a.wait(time.Second); placements(raw) != 1 || !strings.Contains(raw[0], ",c=40,r=26,") {
 		t.Fatalf("want the image over 30-3-1 = 26 rows, got %q", raw)
@@ -66,8 +66,8 @@ func TestTheStripWrapsLongTitlesInAFixedHeight(t *testing.T) {
 
 // The hints name what c and d set, with their current values.
 func TestTheHintsShowTheLookAndDirection(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: line()}}
-	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	src := &fakeSource{maps: map[int][]byte{100: line()}}
+	a := startWith(t, src, tui.Config{Number: 100, AutoDir: true})
 	a.send(tea.WindowSizeMsg{Width: 200, Height: 30})
 	a.wait(time.Second)
 	if s := a.strip(); !strings.Contains(s[0], "c look: cards · d dir: auto (LR)") {
@@ -82,8 +82,8 @@ func TestTheHintsShowTheLookAndDirection(t *testing.T) {
 
 // In a narrow pane the legend gives way first, and the c and d hints last.
 func TestNarrowPanesKeepTheLookAndDirectionHints(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: line()}}
-	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	src := &fakeSource{maps: map[int][]byte{100: line()}}
+	a := startWith(t, src, tui.Config{Number: 100, AutoDir: true})
 	for _, c := range []struct {
 		width                 int
 		names, cd, otherHints bool

@@ -335,8 +335,8 @@ func TestScrollingTheDetailView(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		body = append(body, fmt.Sprintf("Paragraph %d.", i))
 	}
-	src := &fakeSource{maps: map[int][]byte{1: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2, "Two", strings.Join(body, "\n\n"))}}
-	a := start(t, src, 1)
+	src := &fakeSource{maps: map[int][]byte{100: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2, "Two", strings.Join(body, "\n\n"))}}
+	a := start(t, src, 100)
 	a.send(tea.WindowSizeMsg{Width: 60, Height: 20})
 	a.key("right")
 	a.key("enter")
@@ -419,9 +419,9 @@ func TestTheDetailViewInListMode(t *testing.T) {
 
 // No string from GitHub reaches the terminal with its escape sequences.
 func TestTheDetailViewIsSanitised(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2,
+	src := &fakeSource{maps: map[int][]byte{100: chain()}, issues: map[string][]byte{"a/b#2": issueJSON(2,
 		"T\x1b]52;c;ZXZpbA==\x07wo", "body \x1b[2J here\n\n`code \x1b]0;title\x07`\n\n[li\x1b[5mnk](https://example.com)")}}
-	a := start(t, src, 1).sized()
+	a := start(t, src, 100).sized()
 	a.key("right")
 	a.key("enter")
 	v := a.view()

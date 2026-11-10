@@ -101,7 +101,7 @@ func fixture(t *testing.T, name string) []byte {
 	return raw
 }
 
-// mapJSON is a map #1 in a/b whose tickets are blocked as given: blockers[n]
+// mapJSON is a map #100 in a/b whose tickets are blocked as given: blockers[n]
 // lists the tickets that ticket n is blocked by.
 func mapJSON(titles map[int]string, blockers map[int][]int) []byte {
 	var nodes []string
@@ -113,7 +113,7 @@ func mapJSON(titles map[int]string, blockers map[int][]int) []byte {
 		nodes = append(nodes, fmt.Sprintf(`{"number":%d,"title":%q,"state":"OPEN","labels":{"nodes":[{"name":"wayfinder:task"}]},
 			"assignees":{"nodes":[]},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}}`, n, titles[n], strings.Join(by, ",")))
 	}
-	return fmt.Appendf(nil, `{"data":{"repository":{"nameWithOwner":"a/b","issue":{"number":1,"title":"Map","state":"OPEN",
+	return fmt.Appendf(nil, `{"data":{"repository":{"nameWithOwner":"a/b","issue":{"number":100,"title":"Map","state":"OPEN",
 		"subIssuesSummary":{"total":%d},"subIssues":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}}}}}`, len(titles), strings.Join(nodes, ","))
 }
 
@@ -491,8 +491,8 @@ func chain() []byte {
 }
 
 func TestArrowsMoveToTheNearestTicket(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: chain()}}
-	a := start(t, src, 1).sized()
+	src := &fakeSource{maps: map[int][]byte{100: chain()}}
+	a := start(t, src, 100).sized()
 	if !strings.Contains(a.view(), "#1 One") {
 		t.Fatalf("#1 isn't selected first:\n%s", a.view())
 	}
@@ -708,8 +708,8 @@ func TestCompactLookFromConfig(t *testing.T) {
 // In a wide pane the line runs left to right; resized tall, it runs top to
 // bottom.
 func TestAutoDirectionRefitsOnResize(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: line()}}
-	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	src := &fakeSource{maps: map[int][]byte{100: line()}}
+	a := startWith(t, src, tui.Config{Number: 100, AutoDir: true})
 	a.send(tea.WindowSizeMsg{Width: 200, Height: 30})
 	a.wait(time.Second)
 	if a.key("right"); a.selected() != 2 {
@@ -727,8 +727,8 @@ func TestAutoDirectionRefitsOnResize(t *testing.T) {
 }
 
 func TestDTogglesTheDirectionAndStopsAuto(t *testing.T) {
-	src := &fakeSource{maps: map[int][]byte{1: line()}}
-	a := startWith(t, src, tui.Config{Number: 1, AutoDir: true})
+	src := &fakeSource{maps: map[int][]byte{100: line()}}
+	a := startWith(t, src, tui.Config{Number: 100, AutoDir: true})
 	a.send(tea.WindowSizeMsg{Width: 200, Height: 30})
 	a.wait(time.Second)
 	a.key("d")
