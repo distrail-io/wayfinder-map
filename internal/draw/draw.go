@@ -212,11 +212,11 @@ func card(img *image.RGBA, t *wayfinder.Ticket, x, y, w, h, s float64, selected,
 	r := 8 * s
 	if focus {
 		for _, b := range focusBands {
-			boxBand(img, x, y, w, h, r, b[0]*s, b[1]*s, fillOf[t.State])
+			band(img, x, y, w, h, r, 0, b[0]*s, b[1]*s, fillOf[t.State])
 		}
 	}
 	if selected {
-		boxBand(img, x, y, w, h, r, 1*s, 4*s, ringCol)
+		band(img, x, y, w, h, r, 0, 1*s, 4*s, ringCol)
 	}
 	fill(img, roundRect(x, y, w, h, r), fillOf[t.State])
 	tc := textOn
@@ -243,7 +243,7 @@ func banner(img *image.RGBA, m *wayfinder.Map, b layout.Rect, look Look, s float
 		r = b.H / 2
 	}
 	if selected {
-		roundBand(img, b.X, b.Y, b.W, b.H, r, 1*s, 4*s, ringCol)
+		band(img, b.X, b.Y, b.W, b.H, r, r+1*s, 1*s, 4*s, ringCol)
 	}
 	col, tc := bannerFill, textOn
 	if m.Closed {
@@ -276,28 +276,27 @@ func banner(img *image.RGBA, m *wayfinder.Map, b layout.Rect, look Look, s float
 	}
 }
 
-// roundBand draws a band around a rounded box, from offset in to out beyond
-// its edge, following its corners, so it rings a pill as well as a card.
-func roundBand(img *image.RGBA, x, y, w, h, r, in, out float64, col color.Color) {
-	p := roundRect(x-out, y-out, w+2*out, h+2*out, r+out)
-	roundRectBackTo(p, x-in, y-in, w+2*in, h+2*in, r+in)
-	fill(img, p, col)
-}
-
 // focusBands are the focus ticket's double border: two bands in its own
 // colour, as offsets from its edge in layout units. The selection's ring
 // lies over the first.
 var focusBands = [][2]float64{{1, 3}, {5, 7}}
 
-// boxBand draws a band around a card, from offset in to out beyond its edge,
-// punching out its middle by winding the inner path the other way.
-func boxBand(img *image.RGBA, x, y, w, h, r, in, out float64, col color.Color) {
-	o := out
-	p := roundRect(x-o, y-o, w+2*o, h+2*o, r+o)
-	p.moveTo(x-in, y-in)
-	p.lineTo(x-in, y+h+in)
-	p.lineTo(x+w+in, y+h+in)
-	p.lineTo(x+w+in, y-in)
+// band draws a band around a box with corners of radius r, from offset in
+// to out beyond its edge, punching out its middle by winding the inner path
+// the other way. The outside follows the box's corners; the inside has
+// corners of radius holeR: r+in to follow them too, as a pill's ring must,
+// or 0 for the square inside a card's bands have always had.
+func band(img *image.RGBA, x, y, w, h, r, holeR, in, out float64, col color.Color) {
+	p := roundRect(x-out, y-out, w+2*out, h+2*out, r+out)
+	x, y, w, h = x-in, y-in, w+2*in, h+2*in
+	p.moveTo(x+holeR, y)
+	p.quadTo(x, y, x, y+holeR)
+	p.lineTo(x, y+h-holeR)
+	p.quadTo(x, y+h, x+holeR, y+h)
+	p.lineTo(x+w-holeR, y+h)
+	p.quadTo(x+w, y+h, x+w, y+h-holeR)
+	p.lineTo(x+w, y+holeR)
+	p.quadTo(x+w, y, x+w-holeR, y)
 	p.close()
 	fill(img, p, col)
 }
@@ -381,20 +380,6 @@ func roundRect(x, y, w, h, r float64) *path {
 	p.quadTo(x, y, x+r, y)
 	p.close()
 	return p
-}
-
-// roundRectBackTo adds roundRect's box to p wound the other way, to punch a
-// hole in it.
-func roundRectBackTo(p *path, x, y, w, h, r float64) {
-	p.moveTo(x+r, y)
-	p.quadTo(x, y, x, y+r)
-	p.lineTo(x, y+h-r)
-	p.quadTo(x, y+h, x+r, y+h)
-	p.lineTo(x+w-r, y+h)
-	p.quadTo(x+w, y+h, x+w, y+h-r)
-	p.lineTo(x+w, y+r)
-	p.quadTo(x+w, y, x+w-r, y)
-	p.close()
 }
 
 // strokeTo adds a polyline to p as one quad per segment, all wound the same
