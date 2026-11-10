@@ -62,6 +62,36 @@ func (a *app) tabTo(s string) {
 	a.t.Fatalf("tab never reached %q:\n%s", s, a.view())
 }
 
+// The banner opens the map as a ticket opens itself: enter and space show
+// the map's detail view, esc comes back to the banner, and o opens the map
+// in the browser.
+func TestTheBannerOpensTheMap(t *testing.T) {
+	for _, k := range []string{"enter", "space"} {
+		t.Run(k, func(t *testing.T) {
+			a, src := ask(t, "map-214.json", tui.Config{})
+			a.key("shift+tab")
+			for range 9 {
+				if a.selected() == 214 {
+					break
+				}
+				a.key("shift+tab")
+			}
+			a.key(k)
+			if !slices.Equal(src.issueLoaded, []string{"banked/ask-barry#214"}) || !a.has("esc map") {
+				t.Fatalf("%s on the banner opened %v:\n%s", k, src.issueLoaded, a.view())
+			}
+			a.key("esc")
+			if a.selected() != 214 {
+				t.Errorf("back on the map, #%d is selected, want the banner #214", a.selected())
+			}
+			a.key("o")
+			if want := []string{"https://github.com/banked/ask-barry/issues/214"}; !slices.Equal(a.opened, want) {
+				t.Errorf("o on the banner opened %q, want %q", a.opened, want)
+			}
+		})
+	}
+}
+
 func TestEnterAndSpaceOpenTheDetailView(t *testing.T) {
 	for _, k := range []string{"enter", "space"} {
 		t.Run(k, func(t *testing.T) {
@@ -412,8 +442,9 @@ func TestTheDetailViewInListMode(t *testing.T) {
 	if !slices.Equal(src.issueLoaded, want) {
 		t.Errorf("loaded %v, want %v", src.issueLoaded, want)
 	}
-	if a.selected() != 218 {
-		t.Errorf("back on the list, #%d is selected, want #218", a.selected())
+	// Leaving the map issue selects the map's row.
+	if a.selected() != 214 {
+		t.Errorf("back on the list, #%d is selected, want the map #214", a.selected())
 	}
 }
 

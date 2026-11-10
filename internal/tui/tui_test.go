@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/distrail-io/wayfinder-map/internal/draw"
+	"github.com/distrail-io/wayfinder-map/internal/layout"
 	"github.com/distrail-io/wayfinder-map/internal/tui"
 )
 
@@ -527,23 +528,71 @@ func TestArrowsMoveToTheNearestTicket(t *testing.T) {
 	}
 }
 
-func TestTabCyclesThroughEveryTicket(t *testing.T) {
+// A map with no tickets still shows its banner, selected, and opens.
+func TestAnEmptyMapShowsTheBannerSelected(t *testing.T) {
+	src := &fakeSource{maps: map[int][]byte{100: mapJSON(nil, nil)}}
+	a := start(t, src, 100)
+	a.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if raw := a.wait(time.Second); placements(raw) != 1 {
+		t.Errorf("an empty map placed %d images, want 1 with its banner", placements(raw))
+	}
+	if !strings.Contains(a.text(), "#100 Map · map · open · 0/0 done") {
+		t.Errorf("the banner isn't selected:\n%s", a.view())
+	}
+	a.key("tab")
+	a.key("enter")
+	if !slices.Equal(src.issueLoaded, []string{"a/b#100"}) {
+		t.Errorf("enter opened %v, want the map a/b#100", src.issueLoaded)
+	}
+}
+
+// The banner is above the tickets in either direction, so up reaches it and
+// down leaves it.
+func TestArrowsReachTheBanner(t *testing.T) {
+	for _, dir := range []layout.Dir{layout.LR, layout.TB} {
+		src := &fakeSource{maps: map[int][]byte{100: chain()}}
+		a := startWith(t, src, tui.Config{Number: 100, Dir: dir}).sized()
+		for range 3 {
+			a.key("up")
+		}
+		if a.selected() != 100 {
+			t.Fatalf("%v: up didn't reach the banner, but #%d", dir, a.selected())
+		}
+		if a.key("down"); a.selected() == 100 {
+			t.Errorf("%v: down didn't leave the banner", dir)
+		}
+	}
+}
+
+// Tab visits the banner first, then every ticket in reading order, and
+// comes round to the banner again.
+func TestTabCyclesThroughTheBannerAndEveryTicket(t *testing.T) {
 	src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-214.json")}}
 	a := start(t, src, 214).sized()
 	seen := map[int]bool{}
-	for range 8 {
+	for range 9 {
 		a.key("tab")
-		for n := 215; n <= 222; n++ {
-			if strings.Contains(a.view(), fmt.Sprintf("\n\x1b[1m#%d ", n)) {
-				seen[n] = true
-			}
-		}
+		seen[a.selected()] = true
 	}
-	if len(seen) != 8 {
-		t.Errorf("8 tabs selected %v, want all 8 tickets", seen)
+	if len(seen) != 9 || !seen[214] {
+		t.Errorf("9 tabs selected %v, want the banner #214 and all 8 tickets", seen)
 	}
 	if !strings.Contains(a.view(), "#215 Where does") {
-		t.Errorf("8 tabs didn't come back to #215:\n%s", a.view())
+		t.Errorf("9 tabs didn't come back to #215:\n%s", a.view())
+	}
+	for range 9 {
+		if a.selected() == 214 {
+			break
+		}
+		a.key("tab")
+	}
+	// #216 is leftmost, and #222 rightmost.
+	if a.key("tab"); a.selected() != 216 {
+		t.Errorf("tab from the banner selected #%d, want the first ticket #216", a.selected())
+	}
+	a.key("shift+tab")
+	if a.key("shift+tab"); a.selected() != 222 {
+		t.Errorf("shift+tab from the banner selected #%d, want the last ticket #222", a.selected())
 	}
 }
 
@@ -801,6 +850,42 @@ func TestListSelectsAndOpensInListOrder(t *testing.T) {
 	a.key("o")
 	if want := []string{"https://github.com/banked/ask-barry/issues/222"}; !slices.Equal(a.opened, want) {
 		t.Errorf("opened %q, want %q", a.opened, want)
+	}
+}
+
+// The list's first row is the map, above the groups, and selects and opens
+// as the banner does.
+func TestListHasTheMapFirst(t *testing.T) {
+	for _, k := range []string{"enter", "space"} {
+		src := &fakeSource{maps: map[int][]byte{214: fixture(t, "map-edge-cases.json")}}
+		a := startWith(t, src, tui.Config{Number: 214, List: true})
+		a.send(tea.WindowSizeMsg{Width: 100, Height: 40})
+		lines := a.lines()
+		if want := "  map #214 · Wayfinder: run Sandcastle standalone against any Banked repo"; lines[0] != want || !strings.Contains(lines[1], "frontier (2)") {
+			t.Fatalf("the list doesn't start with the map's row %q:\n%s", want, a.view())
+		}
+		if a.key("up"); a.selected() != 214 || !strings.Contains(a.view(), "› map #214 · ") {
+			t.Fatalf("up from the first ticket selected #%d, want the map:\n%s", a.selected(), a.view())
+		}
+		if a.key("up"); a.selected() != 214 {
+			t.Errorf("up past the map moved to #%d", a.selected())
+		}
+		if a.key("tab"); a.selected() != 217 {
+			t.Errorf("tab from the map selected #%d, want #217", a.selected())
+		}
+		a.key("shift+tab")
+		a.key("o")
+		if want := []string{"https://github.com/banked/ask-barry/issues/214"}; !slices.Equal(a.opened, want) {
+			t.Errorf("o on the map's row opened %q, want %q", a.opened, want)
+		}
+		a.key(k)
+		if !slices.Equal(src.issueLoaded, []string{"banked/ask-barry#214"}) {
+			t.Errorf("%s on the map's row opened %v", k, src.issueLoaded)
+		}
+		a.key("esc")
+		if a.selected() != 214 {
+			t.Errorf("back on the list, #%d is selected, want the map", a.selected())
+		}
 	}
 }
 

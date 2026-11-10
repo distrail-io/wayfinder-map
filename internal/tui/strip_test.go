@@ -25,6 +25,30 @@ func (a *app) strip() []string {
 	return lines[len(lines)-4 : len(lines)-1]
 }
 
+// The selected banner's strip shows the map as a ticket's shows the ticket:
+// its number and title, bold, then its state and progress.
+func TestTheStripShowsTheSelectedBanner(t *testing.T) {
+	for _, c := range []struct{ fixture, want string }{
+		{"map-214.json", "#214 Wayfinder: run Sandcastle standalone against any Banked repo · map · open · 0/8 done"},
+		{"map-edge-cases.json", "#214 Wayfinder: run Sandcastle standalone against any Banked repo · map · closed · 1/8 done"},
+	} {
+		src := &fakeSource{maps: map[int][]byte{214: fixture(t, c.fixture)}}
+		a := start(t, src, 214).sized()
+		for range 9 {
+			if a.selected() == 214 {
+				break
+			}
+			a.key("tab")
+		}
+		if !strings.Contains(a.text(), c.want) {
+			t.Errorf("%s: the strip lacks %q:\n%s", c.fixture, c.want, a.view())
+		}
+		if !strings.Contains(a.view(), "\x1b[1m#214 Wayfinder: run Sandcastle standalone against any Banked repo\x1b[0m · map") {
+			t.Errorf("%s: the map's number and title aren't bold, or its facts are:\n%q", c.fixture, a.view())
+		}
+	}
+}
+
 // A long title wraps over the strip's two title rows and is cut only when
 // even two rows can't hold it; the strip stays three rows high, so the
 // graph area keeps its size whichever ticket is selected.

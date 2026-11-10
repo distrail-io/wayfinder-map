@@ -26,8 +26,9 @@ func (a *app) wheel(down bool) []string {
 	return a.send(tea.MouseWheelMsg{X: 10, Y: 5, Button: b})
 }
 
-// lone is map #1 in a/b with one ticket, #7, which is drawn in the middle
-// of the graph area.
+// lone is map #1 in a/b with one ticket, #7. In a 100×30 pane the two are
+// drawn in the middle of the graph area: the banner over cell (50, 9) and
+// #7 over (50, 16).
 func lone() []byte {
 	return []byte(`{"data":{"repository":{"nameWithOwner":"a/b","issue":{"number":1,"title":"Map","state":"OPEN",
 		"subIssuesSummary":{"total":1},"subIssues":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":7,"title":"Seven",
@@ -63,10 +64,11 @@ func TestMouseReportingIsOnUnlessTurnedOff(t *testing.T) {
 func TestClickingATicketOpensIt(t *testing.T) {
 	for _, c := range []struct {
 		look       draw.Look
-		nearCorner bool // does a click near the box's corner open #7?
+		corner     [2]int // a cell near the top-left corner of #7's box
+		nearCorner bool   // does a click there open #7?
 	}{
-		{draw.Cards, true},
-		{draw.Compact, false},
+		{draw.Cards, [2]int{35, 15}, true},
+		{draw.Compact, [2]int{46, 13}, false},
 	} {
 		t.Run(c.look.String(), func(t *testing.T) {
 			src := &fakeSource{maps: map[int][]byte{1: lone()}}
@@ -80,16 +82,35 @@ func TestClickingATicketOpensIt(t *testing.T) {
 			if len(src.issueLoaded) != 0 || strings.Contains(a.view(), "tab select · enter open") {
 				t.Fatalf("a click off the ticket opened %v:\n%s", src.issueLoaded, a.view())
 			}
-			a.click(46, 11)
-			if got := len(src.issueLoaded) == 1; got != c.nearCorner {
-				t.Errorf("a click near the corner of #7's box opened it: %v, want %v", got, c.nearCorner)
+			a.click(c.corner[0], c.corner[1])
+			if got := slices.Equal(src.issueLoaded, []string{"a/b#7"}); got != c.nearCorner {
+				t.Errorf("a click near the corner of #7's box opened it: %v, want %v; opened %v", got, c.nearCorner, src.issueLoaded)
 			}
 			if c.nearCorner {
 				a.key("esc")
 			}
-			a.click(50, 13)
+			a.click(50, 16)
 			if src.issueLoaded[len(src.issueLoaded)-1] != "a/b#7" || !a.has("#7 Seven") {
 				t.Errorf("a click on #7 didn't open it: %v\n%s", src.issueLoaded, a.view())
+			}
+		})
+	}
+}
+
+// A click on the banner selects it and opens the map's detail view, as a
+// click on a ticket does; leaving comes back to the banner.
+func TestClickingTheBannerOpensTheMap(t *testing.T) {
+	for _, look := range []draw.Look{draw.Cards, draw.Compact} {
+		t.Run(look.String(), func(t *testing.T) {
+			src := &fakeSource{maps: map[int][]byte{1: lone()}}
+			a := startWith(t, src, tui.Config{Number: 1, Look: look}).sized()
+			a.click(50, 9)
+			if !slices.Equal(src.issueLoaded, []string{"a/b#1"}) {
+				t.Fatalf("a click on the banner opened %v, want the map a/b#1", src.issueLoaded)
+			}
+			a.key("esc")
+			if a.selected() != 1 {
+				t.Errorf("back on the map, #%d is selected, want the banner #1", a.selected())
 			}
 		})
 	}

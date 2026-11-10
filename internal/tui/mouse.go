@@ -52,10 +52,16 @@ func (m Model) ticketAt(x, y int) int {
 }
 
 // hit is the ticket of mp under cell (x, y) of an image of its layout res,
-// or 0. It places the boxes with tr, as Render draws them; a compact
-// ticket is the circle, not the square around it.
+// or the map's number for its banner, or 0. It places the boxes with tr, as
+// Render draws them; a compact ticket is the circle, not the square around
+// it. Only the map's layout has a banner, not a mini-map's.
 func (m Model) hit(mp *wayfinder.Map, res layout.Result, tr draw.Transform, x, y int) int {
 	px, py := (float64(x)+0.5)*float64(m.cellW), (float64(y)+0.5)*float64(m.cellH)
+	if r, ok := res.Boxes[mp.Number]; ok {
+		if b := tr.Rect(r); px >= b.X && px < b.X+b.W && py >= b.Y && py < b.Y+b.H {
+			return mp.Number
+		}
+	}
 	for _, t := range mp.Tickets {
 		b := tr.Rect(res.Boxes[t.Number])
 		if m.look == draw.Compact {
