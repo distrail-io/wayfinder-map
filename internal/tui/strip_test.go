@@ -34,12 +34,7 @@ func TestTheStripShowsTheSelectedBanner(t *testing.T) {
 	} {
 		src := &fakeSource{maps: map[int][]byte{214: fixture(t, c.fixture)}}
 		a := start(t, src, 214).sized()
-		for range 9 {
-			if a.selected() == 214 {
-				break
-			}
-			a.key("tab")
-		}
+		a.tabToSelect(214)
 		if !strings.Contains(a.text(), c.want) {
 			t.Errorf("%s: the strip lacks %q:\n%s", c.fixture, c.want, a.view())
 		}

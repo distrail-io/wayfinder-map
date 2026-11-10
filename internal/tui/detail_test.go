@@ -53,13 +53,29 @@ func (a *app) row(s string) int {
 // contains s.
 func (a *app) tabTo(s string) {
 	a.t.Helper()
+	a.tabUntil(fmt.Sprintf("%q", s), func() bool {
+		l := a.row("› ")
+		return l >= 0 && strings.Contains(a.lines()[l], s)
+	})
+}
+
+// tabToSelect tabs round the map until ticket or banner n is selected.
+func (a *app) tabToSelect(n int) {
+	a.t.Helper()
+	a.tabUntil(fmt.Sprintf("#%d", n), func() bool { return a.selected() == n })
+}
+
+// tabUntil presses tab until reached holds, and fails the test, naming
+// what it was after, if it never does.
+func (a *app) tabUntil(what string, reached func() bool) {
+	a.t.Helper()
 	for range 30 {
 		a.key("tab")
-		if l := a.row("› "); l >= 0 && strings.Contains(a.lines()[l], s) {
+		if reached() {
 			return
 		}
 	}
-	a.t.Fatalf("tab never reached %q:\n%s", s, a.view())
+	a.t.Fatalf("tab never reached %s:\n%s", what, a.view())
 }
 
 // The banner opens the map as a ticket opens itself: enter and space show
@@ -69,13 +85,7 @@ func TestTheBannerOpensTheMap(t *testing.T) {
 	for _, k := range []string{"enter", "space"} {
 		t.Run(k, func(t *testing.T) {
 			a, src := ask(t, "map-214.json", tui.Config{})
-			a.key("shift+tab")
-			for range 9 {
-				if a.selected() == 214 {
-					break
-				}
-				a.key("shift+tab")
-			}
+			a.tabToSelect(214)
 			a.key(k)
 			if !slices.Equal(src.issueLoaded, []string{"banked/ask-barry#214"}) || !a.has("esc map") {
 				t.Fatalf("%s on the banner opened %v:\n%s", k, src.issueLoaded, a.view())

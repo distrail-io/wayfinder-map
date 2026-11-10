@@ -580,12 +580,7 @@ func TestTabCyclesThroughTheBannerAndEveryTicket(t *testing.T) {
 	if !strings.Contains(a.view(), "#215 Where does") {
 		t.Errorf("9 tabs didn't come back to #215:\n%s", a.view())
 	}
-	for range 9 {
-		if a.selected() == 214 {
-			break
-		}
-		a.key("tab")
-	}
+	a.tabToSelect(214)
 	// #216 is leftmost, and #222 rightmost.
 	if a.key("tab"); a.selected() != 216 {
 		t.Errorf("tab from the banner selected #%d, want the first ticket #216", a.selected())
