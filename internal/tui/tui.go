@@ -775,16 +775,11 @@ func (m Model) strip() []string {
 		}
 		title = m.titleRows(t.Number, t.Title, fmt.Sprintf(" · %s · %s · ⛔%d ↦%d", t.Type, t.State, open, len(m.shown.Blocks(t.Number))))
 	case m.bannerSelected():
-		state, done := "open", 0
+		state := "open"
 		if m.shown.Closed {
 			state = "closed"
 		}
-		for _, t := range m.shown.Tickets {
-			if t.State == wayfinder.Done {
-				done++
-			}
-		}
-		title = m.titleRows(m.shown.Number, m.shown.Title, fmt.Sprintf(" · map · %s · %d/%d done", state, done, len(m.shown.Tickets)))
+		title = m.titleRows(m.shown.Number, m.shown.Title, fmt.Sprintf(" · map · %s · %d/%d done", state, m.shown.Done(), len(m.shown.Tickets)))
 	}
 	lines[1], lines[2] = title[0], title[1]
 	return lines

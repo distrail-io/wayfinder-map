@@ -280,13 +280,7 @@ func banner(img *image.RGBA, m *wayfinder.Map, b layout.Rect, look Look, s float
 	// A title on one line leaves the text block centred.
 	top := b.Y + fs + 9*s + float64(2-len(lines))*fs*1.25/2
 	text(img, tx, top, num, fs*0.9, true, tc)
-	done := 0
-	for _, t := range m.Tickets {
-		if t.State == wayfinder.Done {
-			done++
-		}
-	}
-	progress := fmt.Sprintf("%d/%d done", done, len(m.Tickets))
+	progress := fmt.Sprintf("%d/%d done", m.Done(), len(m.Tickets))
 	text(img, tx+tw-measure(progress, fs*0.9, true), top, progress, fs*0.9, true, tc)
 	for i, l := range lines {
 		text(img, tx, top+fs*1.45+float64(i)*fs*1.25, l, fs, false, tc)

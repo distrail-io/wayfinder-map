@@ -298,13 +298,7 @@ func (b *detailBuilder) subIssues() {
 	b.add("")
 	switch {
 	case b.isMap:
-		done := 0
-		for _, t := range b.m.shown.Tickets {
-			if t.State == wayfinder.Done {
-				done++
-			}
-		}
-		b.heading(subIssuesHeading(done, len(b.m.shown.Tickets)))
+		b.heading(subIssuesHeading(b.m.shown.Done(), len(b.m.shown.Tickets)))
 		for _, t := range b.m.shown.Tickets {
 			b.link(wayfinder.Related{IssueRef: b.m.onMap(t.Number), Title: t.Title, Closed: t.Closed}, t.State.String()+withType(t.Type))
 		}

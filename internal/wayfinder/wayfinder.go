@@ -125,6 +125,18 @@ func (m *Map) MiniMap(n int) *Map {
 	return mini
 }
 
+// Done counts the map's tickets that are done, its progress out of
+// len(m.Tickets).
+func (m *Map) Done() int {
+	n := 0
+	for _, t := range m.Tickets {
+		if t.State == Done {
+			n++
+		}
+	}
+	return n
+}
+
 // Ticket returns the map's ticket with this number, or nil.
 func (m *Map) Ticket(n int) *Ticket {
 	i, ok := slices.BinarySearchFunc(m.Tickets, n, func(t *Ticket, n int) int { return t.Number - n })
